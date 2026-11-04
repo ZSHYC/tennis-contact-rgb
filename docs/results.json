@@ -1,0 +1,1046 @@
+{
+  "model": "TennisContactNet",
+  "historical_name": "EO / trunk2:event_only / phase0",
+  "parameters": 6797590,
+  "validation": {
+    "videos": 505,
+    "native_frames": 197117,
+    "gt": 4498,
+    "cells": [
+      {
+        "regime": "primary",
+        "source": "20260706_0712",
+        "type": "hit",
+        "thresholds": {
+          "hit": 0.6,
+          "bounce": 0.48
+        },
+        "gt": 244,
+        "tp": 220,
+        "fp": 9,
+        "fn": 24,
+        "precision": 0.9606986899563319,
+        "recall": 0.9016393442622951,
+        "f1": 0.930232558139535
+      },
+      {
+        "regime": "primary",
+        "source": "20260706_0712",
+        "type": "bounce",
+        "thresholds": {
+          "hit": 0.6,
+          "bounce": 0.48
+        },
+        "gt": 206,
+        "tp": 192,
+        "fp": 31,
+        "fn": 14,
+        "precision": 0.8609865470852018,
+        "recall": 0.9320388349514563,
+        "f1": 0.8951048951048951
+      },
+      {
+        "regime": "primary",
+        "source": "20260706_0712",
+        "type": "all",
+        "thresholds": {
+          "hit": 0.6,
+          "bounce": 0.48
+        },
+        "gt": 450,
+        "tp": 412,
+        "fp": 40,
+        "fn": 38,
+        "precision": 0.911504424778761,
+        "recall": 0.9155555555555556,
+        "f1": 0.9135254988913526
+      },
+      {
+        "regime": "primary",
+        "source": "2606_admin_back_clipped",
+        "type": "hit",
+        "thresholds": {
+          "hit": 0.6,
+          "bounce": 0.48
+        },
+        "gt": 32,
+        "tp": 26,
+        "fp": 5,
+        "fn": 6,
+        "precision": 0.8387096774193549,
+        "recall": 0.8125,
+        "f1": 0.8253968253968254
+      },
+      {
+        "regime": "primary",
+        "source": "2606_admin_back_clipped",
+        "type": "bounce",
+        "thresholds": {
+          "hit": 0.6,
+          "bounce": 0.48
+        },
+        "gt": 35,
+        "tp": 25,
+        "fp": 5,
+        "fn": 10,
+        "precision": 0.8333333333333334,
+        "recall": 0.7142857142857143,
+        "f1": 0.7692307692307692
+      },
+      {
+        "regime": "primary",
+        "source": "2606_admin_back_clipped",
+        "type": "all",
+        "thresholds": {
+          "hit": 0.6,
+          "bounce": 0.48
+        },
+        "gt": 67,
+        "tp": 51,
+        "fp": 10,
+        "fn": 16,
+        "precision": 0.8360655737704918,
+        "recall": 0.7611940298507462,
+        "f1": 0.796875
+      },
+      {
+        "regime": "primary",
+        "source": "back_match_clipped",
+        "type": "hit",
+        "thresholds": {
+          "hit": 0.6,
+          "bounce": 0.48
+        },
+        "gt": 45,
+        "tp": 41,
+        "fp": 4,
+        "fn": 4,
+        "precision": 0.9111111111111111,
+        "recall": 0.9111111111111111,
+        "f1": 0.9111111111111111
+      },
+      {
+        "regime": "primary",
+        "source": "back_match_clipped",
+        "type": "bounce",
+        "thresholds": {
+          "hit": 0.6,
+          "bounce": 0.48
+        },
+        "gt": 30,
+        "tp": 27,
+        "fp": 9,
+        "fn": 3,
+        "precision": 0.75,
+        "recall": 0.9,
+        "f1": 0.8181818181818182
+      },
+      {
+        "regime": "primary",
+        "source": "back_match_clipped",
+        "type": "all",
+        "thresholds": {
+          "hit": 0.6,
+          "bounce": 0.48
+        },
+        "gt": 75,
+        "tp": 68,
+        "fp": 13,
+        "fn": 7,
+        "precision": 0.8395061728395061,
+        "recall": 0.9066666666666666,
+        "f1": 0.8717948717948718
+      },
+      {
+        "regime": "primary",
+        "source": "e2espot_tennis",
+        "type": "hit",
+        "thresholds": {
+          "hit": 0.6,
+          "bounce": 0.48
+        },
+        "gt": 1904,
+        "tp": 1893,
+        "fp": 40,
+        "fn": 11,
+        "precision": 0.9793067770305225,
+        "recall": 0.9942226890756303,
+        "f1": 0.9867083659108679
+      },
+      {
+        "regime": "primary",
+        "source": "e2espot_tennis",
+        "type": "bounce",
+        "thresholds": {
+          "hit": 0.6,
+          "bounce": 0.48
+        },
+        "gt": 1738,
+        "tp": 1725,
+        "fp": 50,
+        "fn": 13,
+        "precision": 0.971830985915493,
+        "recall": 0.9925201380897584,
+        "f1": 0.982066609735269
+      },
+      {
+        "regime": "primary",
+        "source": "e2espot_tennis",
+        "type": "all",
+        "thresholds": {
+          "hit": 0.6,
+          "bounce": 0.48
+        },
+        "gt": 3642,
+        "tp": 3618,
+        "fp": 90,
+        "fn": 24,
+        "precision": 0.9757281553398058,
+        "recall": 0.9934102141680395,
+        "f1": 0.9844897959183674
+      },
+      {
+        "regime": "primary",
+        "source": "loveall",
+        "type": "hit",
+        "thresholds": {
+          "hit": 0.6,
+          "bounce": 0.48
+        },
+        "gt": 31,
+        "tp": 25,
+        "fp": 3,
+        "fn": 6,
+        "precision": 0.8928571428571429,
+        "recall": 0.8064516129032258,
+        "f1": 0.8474576271186439
+      },
+      {
+        "regime": "primary",
+        "source": "loveall",
+        "type": "bounce",
+        "thresholds": {
+          "hit": 0.6,
+          "bounce": 0.48
+        },
+        "gt": 47,
+        "tp": 27,
+        "fp": 6,
+        "fn": 20,
+        "precision": 0.8181818181818182,
+        "recall": 0.574468085106383,
+        "f1": 0.675
+      },
+      {
+        "regime": "primary",
+        "source": "loveall",
+        "type": "all",
+        "thresholds": {
+          "hit": 0.6,
+          "bounce": 0.48
+        },
+        "gt": 78,
+        "tp": 52,
+        "fp": 9,
+        "fn": 26,
+        "precision": 0.8524590163934426,
+        "recall": 0.6666666666666666,
+        "f1": 0.7482014388489209
+      },
+      {
+        "regime": "primary",
+        "source": "tracknet_tennis",
+        "type": "hit",
+        "thresholds": {
+          "hit": 0.6,
+          "bounce": 0.48
+        },
+        "gt": 91,
+        "tp": 90,
+        "fp": 1,
+        "fn": 1,
+        "precision": 0.989010989010989,
+        "recall": 0.989010989010989,
+        "f1": 0.989010989010989
+      },
+      {
+        "regime": "primary",
+        "source": "tracknet_tennis",
+        "type": "bounce",
+        "thresholds": {
+          "hit": 0.6,
+          "bounce": 0.48
+        },
+        "gt": 95,
+        "tp": 89,
+        "fp": 0,
+        "fn": 6,
+        "precision": 1.0,
+        "recall": 0.9368421052631579,
+        "f1": 0.967391304347826
+      },
+      {
+        "regime": "primary",
+        "source": "tracknet_tennis",
+        "type": "all",
+        "thresholds": {
+          "hit": 0.6,
+          "bounce": 0.48
+        },
+        "gt": 186,
+        "tp": 179,
+        "fp": 1,
+        "fn": 7,
+        "precision": 0.9944444444444445,
+        "recall": 0.9623655913978495,
+        "f1": 0.9781420765027323
+      },
+      {
+        "regime": "primary",
+        "source": "all",
+        "type": "hit",
+        "thresholds": {
+          "hit": 0.6,
+          "bounce": 0.48
+        },
+        "gt": 2347,
+        "tp": 2295,
+        "fp": 62,
+        "fn": 52,
+        "precision": 0.9736953754773017,
+        "recall": 0.9778440562420111,
+        "f1": 0.975765306122449
+      },
+      {
+        "regime": "primary",
+        "source": "all",
+        "type": "bounce",
+        "thresholds": {
+          "hit": 0.6,
+          "bounce": 0.48
+        },
+        "gt": 2151,
+        "tp": 2085,
+        "fp": 101,
+        "fn": 66,
+        "precision": 0.953796889295517,
+        "recall": 0.9693165969316597,
+        "f1": 0.9614941203596957
+      },
+      {
+        "regime": "primary",
+        "source": "all",
+        "type": "all",
+        "thresholds": {
+          "hit": 0.6,
+          "bounce": 0.48
+        },
+        "gt": 4498,
+        "tp": 4380,
+        "fp": 163,
+        "fn": 118,
+        "precision": 0.9641206251375742,
+        "recall": 0.9737661182747888,
+        "f1": 0.9689193673266231
+      },
+      {
+        "regime": "secondary",
+        "source": "20260706_0712",
+        "type": "hit",
+        "thresholds": {
+          "hit": 0.67,
+          "bounce": 0.57
+        },
+        "gt": 244,
+        "tp": 218,
+        "fp": 7,
+        "fn": 26,
+        "precision": 0.9688888888888889,
+        "recall": 0.8934426229508197,
+        "f1": 0.929637526652452
+      },
+      {
+        "regime": "secondary",
+        "source": "20260706_0712",
+        "type": "bounce",
+        "thresholds": {
+          "hit": 0.67,
+          "bounce": 0.57
+        },
+        "gt": 206,
+        "tp": 191,
+        "fp": 24,
+        "fn": 15,
+        "precision": 0.8883720930232558,
+        "recall": 0.9271844660194175,
+        "f1": 0.9073634204275535
+      },
+      {
+        "regime": "secondary",
+        "source": "20260706_0712",
+        "type": "all",
+        "thresholds": {
+          "hit": 0.67,
+          "bounce": 0.57
+        },
+        "gt": 450,
+        "tp": 409,
+        "fp": 31,
+        "fn": 41,
+        "precision": 0.9295454545454546,
+        "recall": 0.9088888888888889,
+        "f1": 0.9191011235955056
+      },
+      {
+        "regime": "secondary",
+        "source": "2606_admin_back_clipped",
+        "type": "hit",
+        "thresholds": {
+          "hit": 0.67,
+          "bounce": 0.57
+        },
+        "gt": 32,
+        "tp": 25,
+        "fp": 5,
+        "fn": 7,
+        "precision": 0.8333333333333334,
+        "recall": 0.78125,
+        "f1": 0.8064516129032259
+      },
+      {
+        "regime": "secondary",
+        "source": "2606_admin_back_clipped",
+        "type": "bounce",
+        "thresholds": {
+          "hit": 0.67,
+          "bounce": 0.57
+        },
+        "gt": 35,
+        "tp": 24,
+        "fp": 4,
+        "fn": 11,
+        "precision": 0.8571428571428571,
+        "recall": 0.6857142857142857,
+        "f1": 0.7619047619047619
+      },
+      {
+        "regime": "secondary",
+        "source": "2606_admin_back_clipped",
+        "type": "all",
+        "thresholds": {
+          "hit": 0.67,
+          "bounce": 0.57
+        },
+        "gt": 67,
+        "tp": 49,
+        "fp": 9,
+        "fn": 18,
+        "precision": 0.8448275862068966,
+        "recall": 0.7313432835820896,
+        "f1": 0.784
+      },
+      {
+        "regime": "secondary",
+        "source": "back_match_clipped",
+        "type": "hit",
+        "thresholds": {
+          "hit": 0.67,
+          "bounce": 0.57
+        },
+        "gt": 45,
+        "tp": 41,
+        "fp": 3,
+        "fn": 4,
+        "precision": 0.9318181818181818,
+        "recall": 0.9111111111111111,
+        "f1": 0.9213483146067416
+      },
+      {
+        "regime": "secondary",
+        "source": "back_match_clipped",
+        "type": "bounce",
+        "thresholds": {
+          "hit": 0.67,
+          "bounce": 0.57
+        },
+        "gt": 30,
+        "tp": 27,
+        "fp": 7,
+        "fn": 3,
+        "precision": 0.7941176470588235,
+        "recall": 0.9,
+        "f1": 0.84375
+      },
+      {
+        "regime": "secondary",
+        "source": "back_match_clipped",
+        "type": "all",
+        "thresholds": {
+          "hit": 0.67,
+          "bounce": 0.57
+        },
+        "gt": 75,
+        "tp": 68,
+        "fp": 10,
+        "fn": 7,
+        "precision": 0.8717948717948718,
+        "recall": 0.9066666666666666,
+        "f1": 0.8888888888888887
+      },
+      {
+        "regime": "secondary",
+        "source": "e2espot_tennis",
+        "type": "hit",
+        "thresholds": {
+          "hit": 0.67,
+          "bounce": 0.57
+        },
+        "gt": 1904,
+        "tp": 1891,
+        "fp": 30,
+        "fn": 13,
+        "precision": 0.9843831337844873,
+        "recall": 0.993172268907563,
+        "f1": 0.9887581699346405
+      },
+      {
+        "regime": "secondary",
+        "source": "e2espot_tennis",
+        "type": "bounce",
+        "thresholds": {
+          "hit": 0.67,
+          "bounce": 0.57
+        },
+        "gt": 1738,
+        "tp": 1719,
+        "fp": 40,
+        "fn": 19,
+        "precision": 0.977259806708357,
+        "recall": 0.9890678941311852,
+        "f1": 0.983128395767801
+      },
+      {
+        "regime": "secondary",
+        "source": "e2espot_tennis",
+        "type": "all",
+        "thresholds": {
+          "hit": 0.67,
+          "bounce": 0.57
+        },
+        "gt": 3642,
+        "tp": 3610,
+        "fp": 70,
+        "fn": 32,
+        "precision": 0.9809782608695652,
+        "recall": 0.9912136188907194,
+        "f1": 0.986069379950833
+      },
+      {
+        "regime": "secondary",
+        "source": "loveall",
+        "type": "hit",
+        "thresholds": {
+          "hit": 0.67,
+          "bounce": 0.57
+        },
+        "gt": 31,
+        "tp": 24,
+        "fp": 3,
+        "fn": 7,
+        "precision": 0.8888888888888888,
+        "recall": 0.7741935483870968,
+        "f1": 0.8275862068965517
+      },
+      {
+        "regime": "secondary",
+        "source": "loveall",
+        "type": "bounce",
+        "thresholds": {
+          "hit": 0.67,
+          "bounce": 0.57
+        },
+        "gt": 47,
+        "tp": 25,
+        "fp": 3,
+        "fn": 22,
+        "precision": 0.8928571428571429,
+        "recall": 0.5319148936170213,
+        "f1": 0.6666666666666667
+      },
+      {
+        "regime": "secondary",
+        "source": "loveall",
+        "type": "all",
+        "thresholds": {
+          "hit": 0.67,
+          "bounce": 0.57
+        },
+        "gt": 78,
+        "tp": 49,
+        "fp": 6,
+        "fn": 29,
+        "precision": 0.8909090909090909,
+        "recall": 0.6282051282051282,
+        "f1": 0.736842105263158
+      },
+      {
+        "regime": "secondary",
+        "source": "tracknet_tennis",
+        "type": "hit",
+        "thresholds": {
+          "hit": 0.67,
+          "bounce": 0.57
+        },
+        "gt": 91,
+        "tp": 90,
+        "fp": 1,
+        "fn": 1,
+        "precision": 0.989010989010989,
+        "recall": 0.989010989010989,
+        "f1": 0.989010989010989
+      },
+      {
+        "regime": "secondary",
+        "source": "tracknet_tennis",
+        "type": "bounce",
+        "thresholds": {
+          "hit": 0.67,
+          "bounce": 0.57
+        },
+        "gt": 95,
+        "tp": 89,
+        "fp": 0,
+        "fn": 6,
+        "precision": 1.0,
+        "recall": 0.9368421052631579,
+        "f1": 0.967391304347826
+      },
+      {
+        "regime": "secondary",
+        "source": "tracknet_tennis",
+        "type": "all",
+        "thresholds": {
+          "hit": 0.67,
+          "bounce": 0.57
+        },
+        "gt": 186,
+        "tp": 179,
+        "fp": 1,
+        "fn": 7,
+        "precision": 0.9944444444444445,
+        "recall": 0.9623655913978495,
+        "f1": 0.9781420765027323
+      },
+      {
+        "regime": "secondary",
+        "source": "all",
+        "type": "hit",
+        "thresholds": {
+          "hit": 0.67,
+          "bounce": 0.57
+        },
+        "gt": 2347,
+        "tp": 2289,
+        "fp": 49,
+        "fn": 58,
+        "precision": 0.9790419161676647,
+        "recall": 0.9752876011930124,
+        "f1": 0.9771611526147279
+      },
+      {
+        "regime": "secondary",
+        "source": "all",
+        "type": "bounce",
+        "thresholds": {
+          "hit": 0.67,
+          "bounce": 0.57
+        },
+        "gt": 2151,
+        "tp": 2075,
+        "fp": 78,
+        "fn": 76,
+        "precision": 0.9637714816535068,
+        "recall": 0.9646675964667596,
+        "f1": 0.9642193308550187
+      },
+      {
+        "regime": "secondary",
+        "source": "all",
+        "type": "all",
+        "thresholds": {
+          "hit": 0.67,
+          "bounce": 0.57
+        },
+        "gt": 4498,
+        "tp": 4364,
+        "fp": 127,
+        "fn": 134,
+        "precision": 0.9717212202182142,
+        "recall": 0.9702089817696754,
+        "f1": 0.9709645121815551
+      }
+    ]
+  },
+  "external": {
+    "official_e2e_1622": {
+      "primary": {
+        "thresholds": {
+          "hit": 0.6,
+          "bounce": 0.48
+        },
+        "counts": {
+          "hit": {
+            "gt": 9861,
+            "predictions": 10017,
+            "tp": 9792,
+            "fp": 225,
+            "fn": 69
+          },
+          "bounce": {
+            "gt": 9312,
+            "predictions": 9187,
+            "tp": 8907,
+            "fp": 280,
+            "fn": 405
+          },
+          "overall": {
+            "gt": 19173,
+            "predictions": 19204,
+            "tp": 18699,
+            "fp": 505,
+            "fn": 474
+          }
+        },
+        "metrics": {
+          "hit": {
+            "tp": 9792,
+            "fp": 225,
+            "fn": 69,
+            "precision": 0.977538185085355,
+            "recall": 0.9930027380590204,
+            "f1": 0.9852097796559011,
+            "fp_per_minute": 0.5537714134483711
+          },
+          "bounce": {
+            "tp": 8907,
+            "fp": 280,
+            "fn": 405,
+            "precision": 0.9695221508653532,
+            "recall": 0.9565077319587629,
+            "f1": 0.9629709714038596,
+            "fp_per_minute": 0.6891377589579729
+          },
+          "overall": {
+            "tp": 18699,
+            "fp": 505,
+            "fn": 474,
+            "precision": 0.9737033951260154,
+            "recall": 0.9752777343138789,
+            "f1": 0.9744899288636424,
+            "fp_per_minute": 1.2429091724063441
+          }
+        }
+      },
+      "secondary": {
+        "thresholds": {
+          "hit": 0.67,
+          "bounce": 0.57
+        },
+        "counts": {
+          "hit": {
+            "gt": 9861,
+            "predictions": 9987,
+            "tp": 9776,
+            "fp": 211,
+            "fn": 85
+          },
+          "bounce": {
+            "gt": 9312,
+            "predictions": 9119,
+            "tp": 8882,
+            "fp": 237,
+            "fn": 430
+          },
+          "overall": {
+            "gt": 19173,
+            "predictions": 19106,
+            "tp": 18658,
+            "fp": 448,
+            "fn": 515
+          }
+        },
+        "metrics": {
+          "hit": {
+            "tp": 9776,
+            "fp": 211,
+            "fn": 85,
+            "precision": 0.978872534294583,
+            "recall": 0.9913801845654598,
+            "f1": 0.985086658605401,
+            "fp_per_minute": 0.5193145255004724
+          },
+          "bounce": {
+            "tp": 8882,
+            "fp": 237,
+            "fn": 430,
+            "precision": 0.9740103081478232,
+            "recall": 0.9538230240549829,
+            "f1": 0.963810970647279,
+            "fp_per_minute": 0.5833058888322842
+          },
+          "overall": {
+            "tp": 18658,
+            "fp": 448,
+            "fn": 515,
+            "precision": 0.976551868522977,
+            "recall": 0.973139310488708,
+            "f1": 0.9748426029938085,
+            "fp_per_minute": 1.1026204143327567
+          }
+        }
+      }
+    },
+    "historical_admin_6": {
+      "primary": {
+        "thresholds": {
+          "hit": 0.6,
+          "bounce": 0.48
+        },
+        "counts": {
+          "hit": {
+            "gt": 443,
+            "predictions": 473,
+            "tp": 395,
+            "fp": 78,
+            "fn": 48
+          },
+          "bounce": {
+            "gt": 432,
+            "predictions": 439,
+            "tp": 368,
+            "fp": 71,
+            "fn": 64
+          },
+          "overall": {
+            "gt": 875,
+            "predictions": 912,
+            "tp": 763,
+            "fp": 149,
+            "fn": 112
+          }
+        },
+        "metrics": {
+          "hit": {
+            "tp": 395,
+            "fp": 78,
+            "fn": 48,
+            "precision": 0.8350951374207188,
+            "recall": 0.891647855530474,
+            "f1": 0.8624454148471615,
+            "fp_per_minute": 3.630963636649598
+          },
+          "bounce": {
+            "tp": 368,
+            "fp": 71,
+            "fn": 64,
+            "precision": 0.8382687927107062,
+            "recall": 0.8518518518518519,
+            "f1": 0.8450057405281287,
+            "fp_per_minute": 3.3051079256682234
+          },
+          "overall": {
+            "tp": 763,
+            "fp": 149,
+            "fn": 112,
+            "precision": 0.8366228070175439,
+            "recall": 0.872,
+            "f1": 0.8539451594851707,
+            "fp_per_minute": 6.936071562317822
+          }
+        }
+      },
+      "secondary": {
+        "thresholds": {
+          "hit": 0.67,
+          "bounce": 0.57
+        },
+        "counts": {
+          "hit": {
+            "gt": 443,
+            "predictions": 449,
+            "tp": 388,
+            "fp": 61,
+            "fn": 55
+          },
+          "bounce": {
+            "gt": 432,
+            "predictions": 409,
+            "tp": 358,
+            "fp": 51,
+            "fn": 74
+          },
+          "overall": {
+            "gt": 875,
+            "predictions": 858,
+            "tp": 746,
+            "fp": 112,
+            "fn": 129
+          }
+        },
+        "metrics": {
+          "hit": {
+            "tp": 388,
+            "fp": 61,
+            "fn": 55,
+            "precision": 0.8641425389755011,
+            "recall": 0.8758465011286681,
+            "f1": 0.8699551569506726,
+            "fp_per_minute": 2.8395997671234032
+          },
+          "bounce": {
+            "tp": 358,
+            "fp": 51,
+            "fn": 74,
+            "precision": 0.8753056234718827,
+            "recall": 0.8287037037037037,
+            "f1": 0.8513674197384068,
+            "fp_per_minute": 2.374091608578583
+          },
+          "overall": {
+            "tp": 746,
+            "fp": 112,
+            "fn": 129,
+            "precision": 0.8694638694638694,
+            "recall": 0.8525714285714285,
+            "f1": 0.8609347951529139,
+            "fp_per_minute": 5.213691375701987
+          }
+        }
+      }
+    },
+    "historical_holdout_45": {
+      "primary": {
+        "thresholds": {
+          "hit": 0.6,
+          "bounce": 0.48
+        },
+        "counts": {
+          "hit": {
+            "gt": 442,
+            "predictions": 435,
+            "tp": 406,
+            "fp": 29,
+            "fn": 36
+          },
+          "bounce": {
+            "gt": 408,
+            "predictions": 417,
+            "tp": 357,
+            "fp": 60,
+            "fn": 51
+          },
+          "overall": {
+            "gt": 850,
+            "predictions": 852,
+            "tp": 763,
+            "fp": 89,
+            "fn": 87
+          }
+        },
+        "metrics": {
+          "hit": {
+            "tp": 406,
+            "fp": 29,
+            "fn": 36,
+            "precision": 0.9333333333333333,
+            "recall": 0.918552036199095,
+            "f1": 0.9258836944127707,
+            "fp_per_minute": 1.1416357488231634
+          },
+          "bounce": {
+            "tp": 357,
+            "fp": 60,
+            "fn": 51,
+            "precision": 0.8561151079136691,
+            "recall": 0.875,
+            "f1": 0.8654545454545455,
+            "fp_per_minute": 2.362004997565166
+          },
+          "overall": {
+            "tp": 763,
+            "fp": 89,
+            "fn": 87,
+            "precision": 0.8955399061032864,
+            "recall": 0.8976470588235295,
+            "f1": 0.8965922444183314,
+            "fp_per_minute": 3.5036407463883292
+          }
+        }
+      },
+      "secondary": {
+        "thresholds": {
+          "hit": 0.67,
+          "bounce": 0.57
+        },
+        "counts": {
+          "hit": {
+            "gt": 442,
+            "predictions": 412,
+            "tp": 391,
+            "fp": 21,
+            "fn": 51
+          },
+          "bounce": {
+            "gt": 408,
+            "predictions": 397,
+            "tp": 351,
+            "fp": 46,
+            "fn": 57
+          },
+          "overall": {
+            "gt": 850,
+            "predictions": 809,
+            "tp": 742,
+            "fp": 67,
+            "fn": 108
+          }
+        },
+        "metrics": {
+          "hit": {
+            "tp": 391,
+            "fp": 21,
+            "fn": 51,
+            "precision": 0.9490291262135923,
+            "recall": 0.8846153846153846,
+            "f1": 0.9156908665105385,
+            "fp_per_minute": 0.826701749147808
+          },
+          "bounce": {
+            "tp": 351,
+            "fp": 46,
+            "fn": 57,
+            "precision": 0.8841309823677582,
+            "recall": 0.8602941176470589,
+            "f1": 0.8720496894409939,
+            "fp_per_minute": 1.810870498133294
+          },
+          "overall": {
+            "tp": 742,
+            "fp": 67,
+            "fn": 108,
+            "precision": 0.9171817058096415,
+            "recall": 0.8729411764705882,
+            "f1": 0.8945147679324894,
+            "fp_per_minute": 2.637572247281102
+          }
+        }
+      }
+    }
+  },
+  "evaluation": {
+    "match_tolerance_native_frames": 5,
+    "nms_radius": 5,
+    "readout": "local_peak"
+  },
+  "note": "历史正式结果，独立代码整理未重跑完整六来源评价；不是新盲测，也未证明EO外部优于O。"
+}

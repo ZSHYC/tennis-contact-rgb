@@ -1,0 +1,21 @@
+{
+  "samples": [
+    {
+      "id": "match_001",
+      "video": "../data/video/match_001.mp4",
+      "split": "train",
+      "source": "my_dataset",
+      "annotations": "../data/GT/match_001.csv"
+    },
+    {
+      "id": "match_002",
+      "video": "../data/video/match_002.MOV",
+      "split": "validation",
+      "source": "my_dataset",
+      "events": [
+        {"frame_number": 42, "event_type": "hit"},
+        {"frame_number": 77, "event_type": "bounce"}
+      ]
+    }
+  ]
+}
