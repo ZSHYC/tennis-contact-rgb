@@ -283,7 +283,6 @@ def train(
         raise FileExistsError(f"training output already exists: {output}")
     device = torch.device(device)
     if device.type == "cuda":
-        torch.cuda.set_device(device)
         torch.cuda.init()
         torch.cuda.reset_peak_memory_stats(device)
     if batch_size < 1 or not math.isfinite(lr) or lr <= 0:
