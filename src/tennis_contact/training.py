@@ -1,4 +1,4 @@
-"""Training for the standalone pure-RGB event model."""
+"""独立纯RGB事件模型的训练与恢复。"""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ _STOP_REQUESTED = False
 
 
 def _targets(sample: Any, window: dict[str, Any], device: torch.device) -> dict[str, torch.Tensor]:
-    """Build the released EO targets on observed native-frame PTS."""
+    """按观测到的原生帧PTS构造事件软目标。"""
     indices = np.asarray(window["indices"], dtype=np.int64)
     times = np.asarray(sample.frame_times, dtype=np.float64)[indices]
     weights = torch.as_tensor(window["weights"], dtype=torch.float32, device=device)
@@ -80,7 +80,7 @@ def loss_sums(
     targets: dict[str, torch.Tensor],
     positive_weight: float = POSITIVE_WEIGHT,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Return weighted event BCE and the EO joint-score type BCE sums."""
+    """计算加权事件BCE与联合分数类型BCE的分子。"""
     event = output["eventness_logit"].float()
     types = output["type_logits"].float()
     weights, y = targets["weights"], targets["eventness"]
@@ -273,7 +273,7 @@ def train(
     resume: str | Path | None = None,
     order_path: str | Path | None = None,
 ) -> dict[str, Any]:
-    """Train in fixed manifest order and write a resumable, inference-ready checkpoint."""
+    """按固定请求顺序训练，同时保存推理权重与恢复状态。"""
     global _STOP_REQUESTED
     _STOP_REQUESTED = False
     started = perf_counter()

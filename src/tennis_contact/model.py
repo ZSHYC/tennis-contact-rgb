@@ -1,4 +1,4 @@
-"""Standalone pure-RGB tennis hit/bounce network."""
+"""独立纯RGB网球击球与落地检测网络。"""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from torch.nn import functional as F
 
 
 class _FrameSE(nn.Module):
-    """X3D excitation with a separate gate for every frame."""
+    """为每个时刻独立计算通道门控的X3D激励层。"""
 
     is_3d = True
 
@@ -51,7 +51,7 @@ def _enable_standard_silu(model: nn.Module) -> None:
 
 
 class TennisContactNet(nn.Module):
-    """FrameSE X3D-S, localized S3 state, and full-window bidirectional GRU."""
+    """逐帧FrameSE、S3局部状态与完整窗口双向GRU。"""
 
     def __init__(self) -> None:
         super().__init__()

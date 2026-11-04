@@ -1,4 +1,4 @@
-"""Event decoding, matching, and validation-only threshold selection."""
+"""事件解码、一对一匹配与仅validation选阈值。"""
 
 from __future__ import annotations
 
@@ -53,7 +53,7 @@ def decode_events(
     thresholds: dict[str, float],
     nms_radius: int = 5,
 ) -> list[dict[str, Any]]:
-    """Decode one video's dense hit/bounce probabilities on its native frame axis."""
+    """将单视频原生帧轴上的密集hit/bounce分数解码为事件。"""
     values = _scores(scores)
     limits = _thresholds(thresholds)
     if isinstance(nms_radius, bool) or not isinstance(nms_radius, int) or nms_radius < 0:
@@ -104,7 +104,7 @@ def match_events(
     predictions: list[dict[str, Any]],
     tolerance: int = 5,
 ) -> list[tuple[dict[str, Any], dict[str, Any], int]]:
-    """Match one video's events, maximizing TP before minimizing total frame error."""
+    """对单视频先最大化命中数，再最小化总帧误差。"""
     if isinstance(tolerance, bool) or not isinstance(tolerance, int) or tolerance < 0:
         raise ValueError("tolerance must be a non-negative integer")
     matches = []
@@ -173,7 +173,7 @@ def evaluate_predictions(
     thresholds: dict[str, float],
     tolerance: int = 5,
 ) -> dict[str, Any]:
-    """Evaluate dense predictions, pooled overall and by source."""
+    """对密集预测计算总体与各来源事件指标。"""
     sample_list = list(samples)
     sample_ids = [sample.id for sample in sample_list]
     if len(sample_ids) != len(set(sample_ids)) or set(predictions) != set(sample_ids):
@@ -204,7 +204,7 @@ def search_thresholds(
     predictions: dict[str, np.ndarray],
     candidates: Iterable[float] = DEFAULT_THRESHOLD_CANDIDATES,
 ) -> dict[str, float]:
-    """Select joint hit/bounce thresholds using validation videos only."""
+    """仅在validation视频上选择hit/bounce联合工作点。"""
     sample_list = list(samples)
     if not sample_list or any(sample.split != "validation" for sample in sample_list):
         raise ValueError("threshold search requires validation samples only")
