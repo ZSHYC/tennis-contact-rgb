@@ -6,18 +6,23 @@
 
 ## 安装
 
-需要 Python ≥3.10、FFmpeg（包括 `ffprobe`），以及 PyTorch。使用 CUDA 时先按自己的驱动环境安装匹配的 PyTorch。
+使用独立的 Conda 环境 `tennis-contact`，由 [environment.yml](environment.yml) 安装 Python 3.13、FFmpeg（包括 `ffprobe`）和项目依赖。
 
 ```bash
 git clone https://github.com/ZSHYC/tennis-contact-rgb.git
 cd tennis-contact-rgb
-python -m venv .venv
-source .venv/bin/activate
-pip install -e '.[dev]'
+conda env create -f environment.yml
+conda activate tennis-contact
 tennis-contact --help
 ```
 
-Ubuntu 可用 `sudo apt install ffmpeg` 安装视频工具。项目不会自动下载其他模型；两份所需权重随仓库提供。
+后续训练、推理、评价和测试均在该 Conda 环境中运行。新终端先执行 `conda activate tennis-contact`；不方便激活时可使用 `conda run -n tennis-contact tennis-contact --help`。项目不会自动下载其他模型；两份所需权重随仓库提供。
+
+更新依赖：
+
+```bash
+conda env update -n tennis-contact -f environment.yml
+```
 
 ## 直接检测自己的视频
 
