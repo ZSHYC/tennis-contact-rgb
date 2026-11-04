@@ -1,189 +1,220 @@
+<div align="center">
+
 # TennisContactNet
 
-仅使用 RGB 视频检测网球 **hit（击球）和 bounce（落地）**。提供已经训练好的最佳权重，以及独立的数据处理、训练、断点恢复、推理和事件评价代码。
+**从网球视频中定位击球与落地事件。**
 
-本项目来自已完成的 EO 研究模型整理，使用新的项目与模型命名。网络约 **680 万参数**；原六来源开发验证集的事件 F1 为 **96.8919%**，采用 validation 选择的补充阈值时为 **97.0965%**。这些是历史正式评价结果，本次代码整理没有重新运行完整数据集。
+<p>
+  <img alt="Python 3.13" src="https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white">
+  <img alt="PyTorch" src="https://img.shields.io/badge/PyTorch-2.x-EE4C2C?logo=pytorch&logoColor=white">
+  <img alt="Conda environment" src="https://img.shields.io/badge/Environment-Conda-44A833?logo=anaconda&logoColor=white">
+</p>
 
-## 安装
+[快速开始](#快速开始) · [预训练权重](#预训练权重) · [训练与评价](#训练与评价) · [文档](#文档)
 
-使用独立的 Conda 环境 `tennis-contact`，由 [environment.yml](environment.yml) 安装 Python 3.13、FFmpeg（包括 `ffprobe`）和项目依赖。
+</div>
+
+TennisContactNet 是一个基于 RGB 视频的网球事件检测工具。输入比赛视频，输出 **hit（击球）** 和 **bounce（落地）** 的帧号、时间与置信分数，适用于视频标注辅助、比赛片段索引和离线数据分析。
+
+仓库提供可直接使用的预训练权重，以及数据准备、模型训练、断点恢复、批量推理和事件级评价代码。
+
+## 功能概览
+
+| 能力 | 说明 |
+| --- | --- |
+| 单视频推理 | 读取 MP4 / MOV，生成事件列表与逐帧分数 |
+| 批量处理 | 按数据清单和 split 处理视频，每个视频输出一个 JSON |
+| 数据准备 | 解析真实时间戳，支持 CSV、LabelMe 和内联事件标注 |
+| 模型训练 | 支持局部骨干微调、全参数训练、梯度累积和 BF16 |
+| 断点恢复 | 保存模型、优化器、训练游标和随机数状态 |
+| 事件评价 | 按类别与来源统计指标，在 validation 上选择阈值 |
+
+模型约 **680 万参数**，采用 X3D-S、逐帧通道注意力、空间局部状态和双向 GRU。推理需要事件前后的画面，按离线方式运行。
+
+## 快速开始
+
+### 1. 创建 Conda 环境
+
+推荐在 Linux 上使用。准备好 Conda；使用 GPU 时需要可用的 NVIDIA 驱动。
 
 ```bash
 git clone https://github.com/ZSHYC/tennis-contact-rgb.git
 cd tennis-contact-rgb
+
 conda env create -f environment.yml
 conda activate tennis-contact
+
 tennis-contact --help
 ```
 
-后续训练、推理、评价和测试均在该 Conda 环境中运行。新终端先执行 `conda activate tennis-contact`；不方便激活时可使用 `conda run -n tennis-contact tennis-contact --help`。项目不会自动下载其他模型；两份所需权重随仓库提供。
+[environment.yml](environment.yml) 安装 Python 3.13、FFmpeg 和项目依赖。首次安装会下载 PyTorch 及相关运行库。后续命令均在项目根目录、激活该环境后执行。
 
-更新依赖：
-
-```bash
-conda env update -n tennis-contact -f environment.yml
-```
-
-## 直接检测自己的视频
-
-在项目根目录运行：
+### 2. 检测一段视频
 
 ```bash
-tennis-contact predict --video /path/to/match.mp4 \
-  --checkpoint weights/best.pt --device cuda --output runs/match.json
+tennis-contact predict \
+  --video /path/to/match.mp4 \
+  --checkpoint weights/best.pt \
+  --device cuda \
+  --output runs/match.json
 ```
 
-没有 GPU 时把 `--device cuda` 换成 `--device cpu`。CPU 线程数在子命令前指定，例如 `tennis-contact --threads 4 predict ...`。
+使用 CPU 时，将 `--device cuda` 改为 `--device cpu`。
 
-输出 JSON 包含每个原生帧的真实 PTS、两类分数、经过找峰及 NMS 的事件，以及读取、前向和总耗时。`frame_number` 从 **0** 开始；`time_seconds` 相对视频第一帧。每个事件示例：
+### 3. 查看检测结果
 
-```json
-{"frame_number": 123, "event_type": "bounce", "score": 0.91, "time_seconds": 4.1}
+```bash
+python -c 'import json; print(json.load(open("runs/match.json"))["events"])'
 ```
 
-默认使用主阈值 `hit=0.60 / bounce=0.48`；`--profile secondary` 使用原 DEV 选择的 `0.67/0.57`。新数据需要调阈值时，在自己的 validation 上运行下文的 `evaluate --tune`，然后用 `predict --thresholds runs/validation.json` 应用结果。
-
-## 数据处理
-
-复制 [examples/dataset.json](examples/dataset.json)，逐视频明确写出路径、来源和 `train / validation / holdout` 切分。视频与标注路径相对输入清单所在目录。可内联事件，也可提供 CSV 或 LabelMe 标注目录：
+输出文件中的 `events` 字段示例：
 
 ```json
 {
-  "samples": [
+  "events": [
     {
-      "id": "match_001",
-      "video": "video/match_001.mp4",
-      "split": "train",
-      "source": "my_dataset",
-      "annotations": "GT/match_001.csv"
-    },
-    {
-      "id": "match_002",
-      "video": "video/match_002.mp4",
-      "split": "validation",
-      "source": "my_dataset",
-      "events": [{"frame_number": 42, "event_type": "hit"}]
+      "frame_number": 123,
+      "event_type": "bounce",
+      "score": 0.91,
+      "time_seconds": 4.1
     }
   ]
 }
 ```
 
-CSV 为 `frame_number,event_type`，也支持已有数据的 `frame_number,label`。`near_hit / far_hit` 合并为 hit，`near_bounce / far_bounce` 合并为 bounce；net 标签不训练为第三类。CSV 和 LabelMe 文件名前导帧号默认从0开始，1-based 文件应明确写成：
+`frame_number` 从 **0** 开始，`time_seconds` 相对视频第一帧。完整 JSON 还包含原生帧时间戳、每帧两类分数、阈值及运行耗时。字段定义见 [推理与评价](docs/推理与评价.md)。
 
-```json
-"annotations": {"path": "GT/match_001.csv", "frame_numbering": "one_based"}
-```
+## 预训练权重
 
-```bash
-tennis-contact prepare --input /path/to/dataset-input.json --output data/dataset.json
-```
+两份权重随仓库提供，均使用同一 `TennisContactNet` 结构。
 
-`prepare` 解析真实 PTS 和标注，生成一个可读 JSON 数据清单。它不导出图片、特征或轨迹，不创建图像缓存。训练和推理直接解码原视频，只在内存中完成缩放与 JPEG95 编解码，以保持已训练权重的输入分布。
+| 文件 | 用途 |
+| --- | --- |
+| [weights/best.pt](weights/best.pt) | 视频推理，以及在自己的数据上继续微调 |
+| [weights/initialization.pt](weights/initialization.pt) | 作为训练的初始化参数；`train` 默认加载此文件 |
 
-支持 `.mp4/.mov`，扩展名大小写均可；拒绝可视化输出视频。每个视频只能属于一个 split，不随机拆分视频帧。数据按完整标注处理：没有事件的区间就是背景，缺失标签不能当作“部分标注”使用。
+权重中的阈值配置可通过 `predict --profile` 选择：
 
-## 训练与恢复
+| 配置 | hit 阈值 | bounce 阈值 |
+| --- | ---: | ---: |
+| `primary`，默认 | 0.60 | 0.48 |
+| `secondary` | 0.67 | 0.57 |
 
-`weights/initialization.pt` 是 EO 事件续训之前的成熟父模型，`weights/best.pt` 是已经完成续训的最佳 EO 权重。默认从父模型开始，只更新产生本轮 EO 的第二个残差阶段：
+为自己的数据选择工作点时，使用 `evaluate --tune`，再通过 `predict --thresholds` 读取生成的评价文件。
 
-```bash
-tennis-contact train --dataset data/dataset.json \
-  --checkpoint weights/initialization.pt --output runs/train \
-  --device cuda --epochs 1 --batch-size 4 --lr 0.000001 \
-  --scope backbone2 --precision bf16
-```
+## 训练与评价
 
-`batch-size` 表示梯度累积的窗口数，不把多个大视频窗口同时堆进显存；末批不足4个也会更新。`--scope all` 可训练全部网络参数，`--checkpoint weights/best.pt` 可从最佳权重继续适配；BatchNorm 的已有统计始终冻结。BF16 仅用于视觉骨干，局部状态、时间头和 loss 保持 FP32；`--precision fp32` 可关闭混合精度。
+### 准备数据清单
 
-先做短训：
+按照 [数据格式](docs/数据格式.md) 准备视频与标注，并参考 [examples/dataset.json](examples/dataset.json) 填写输入清单。视频需要明确划分为 `train`、`validation` 或 `holdout`。
 
 ```bash
-tennis-contact train --dataset data/dataset.json \
-  --checkpoint weights/initialization.pt --output runs/train \
-  --device cuda --max-steps 2
+tennis-contact prepare \
+  --input data/dataset-input.json \
+  --output data/dataset.json
 ```
 
-恢复命令、文件名与实际训练验证结果见 [训练说明](docs/训练说明.md)。数据读取改为直接原视频后，速度会与历史图像缓存路径不同。完整历史训练包含此前多轮父模型训练；本仓库交付父初始化和最终权重，并不声称一次短命令能从随机初始化重现全部历史成绩。
+`prepare` 将时间戳和规范化事件写入 JSON 清单；训练与推理按需读取原视频。视频和标注数据由使用者准备。
 
-## 批量预测与评价
+### 开始训练
 
 ```bash
-tennis-contact predict --dataset data/dataset.json --split validation \
-  --checkpoint weights/best.pt --device cuda --output runs/validation-predictions
-
-tennis-contact evaluate --dataset data/dataset.json --split validation \
-  --predictions runs/validation-predictions --output runs/validation-primary.json
-
-tennis-contact evaluate --dataset data/dataset.json --split validation \
-  --predictions runs/validation-predictions --tune --output runs/validation.json
+tennis-contact train \
+  --dataset data/dataset.json \
+  --checkpoint weights/initialization.pt \
+  --output runs/train \
+  --device cuda \
+  --epochs 1 \
+  --batch-size 4 \
+  --scope backbone2 \
+  --precision bf16
 ```
 
-评价按类别找局部峰、同类 NMS 半径5帧，再按 **同类 ±5 原生帧一对一匹配**计算 TP/FP/FN、Precision、Recall、F1，并分别报告来源和类别。平顶峰取最左帧；匹配优先最大命中数，再最小时间误差。
+`backbone2` 微调指定骨干阶段；`all` 开放全部网络参数，BatchNorm 统计保持冻结。`batch-size` 表示每次更新累积的窗口数。训练范围、损失函数与恢复操作见 [训练说明](docs/训练说明.md)。
 
-阈值只能在 validation 选择。holdout 使用已经冻结的阈值，例如：
-
-```bash
-tennis-contact predict --dataset data/dataset.json --split holdout \
-  --checkpoint weights/best.pt --thresholds runs/validation.json \
-  --device cuda --output runs/holdout-predictions
-
-tennis-contact evaluate --dataset data/dataset.json --split holdout \
-  --predictions runs/holdout-predictions \
-  --hit-threshold 0.67 --bounce-threshold 0.57 --output runs/holdout.json
-```
-
-最后一条中的两个数只是原 EO 补充工作点示例；自己的数据应填写 validation 实际选出的阈值。
-
-## 网络与成绩
-
-```mermaid
-flowchart TD
-  RGB[连续RGB 448×796] --> X[X3D-S + FrameSE]
-  X --> G[2048维全局特征]
-  X --> S[S3空间特征 96×T×28×50]
-  S --> L[热点外观64维 + soft xy + 熵 + presence]
-  L --> A[68→128→2048 局部残差]
-  A --> T[双向GRU 每方向256]
-  G --> T
-  T --> H[eventness × hit/bounce类型概率]
-  H --> P[原生时间轴还原 + 找峰 + NMS]
-```
-
-模型只输入 RGB。官方球点曾用于父模型训练辅助监督，不作为推理输入；本轮 EO 继续训练使用事件监督。不使用 DINO、B0、TrackNet 轨迹或检测分数。
-
-| 六来源 DEV 工作点 | TP / FP / FN | F1 |
-|---|---|---:|
-| Primary，0.60/0.48 | 4380 / 163 / 118 | **96.8919%** |
-| Secondary，0.67/0.57 | 4364 / 127 / 134 | **97.0965%** |
-
-DEV 为505视频、197,117帧、4,498事件；E2E 占约81%的事件。Primary hit F1为97.5765%，bounce为96.1494%。自采/admin/back/E2E/Loveall/TrackNet 的 Primary F1 依次为 **91.3525% / 79.6875% / 87.1795% / 98.4490% / 74.8201% / 97.8142%**。
-
-| 补充外部评价轴 | 视频数 | Primary F1 |
-|---|---:|---:|
-| 历史 holdout | 45 | 89.6592% |
-| E2E | 1622 | 97.4490% |
-| 历史 admin | 6 | 85.3945% |
-
-完整计数与类别/来源结果在 [docs/results.json](docs/results.json)。DEV 长期参与研发，不是新盲测；不同外部轴也不能混成统一测试成绩。没有同协议父模型外部配对，因此只报告 EO 的外部绝对成绩。
-
-## 文件结构
+训练目录包含：
 
 ```text
-src/tennis_contact/
-  data.py         标注、PTS、视频读取和窗口采样
-  model.py        TennisContactNet及权重加载
-  training.py     训练目标、更新和恢复
-  inference.py    逐窗预测与完整时间轴还原
-  evaluation.py   找峰、NMS、一对一匹配和阈值选择
-  cli.py          四个命令
-weights/
-  best.pt         最佳EO权重
-  initialization.pt  事件续训之前的父权重
-tests/            核心行为回归测试
+runs/train/
+├── last.pt       # 用于推理或继续微调
+└── training.pt   # 用于恢复当前训练
 ```
 
+### 批量推理并选择阈值
+
 ```bash
+tennis-contact predict \
+  --dataset data/dataset.json \
+  --split validation \
+  --checkpoint weights/best.pt \
+  --device cuda \
+  --output runs/validation-predictions
+
+tennis-contact evaluate \
+  --dataset data/dataset.json \
+  --split validation \
+  --predictions runs/validation-predictions \
+  --tune \
+  --output runs/validation.json
+```
+
+评价报告包含总体、击球、落地和各数据来源的 TP / FP / FN、Precision、Recall 与 F1。事件匹配采用同类别 **±5 原生帧**的一对一匹配。`--tune` 只允许用于 validation；holdout 使用已确定的阈值。完整流程见 [推理与评价](docs/推理与评价.md)。
+
+## 模型结构
+
+```mermaid
+flowchart LR
+    A[RGB视频] --> B[PTS时间采样]
+    B --> C[X3D-S + FrameSE]
+    C --> D[全局视觉特征]
+    C --> E[S3空间局部状态]
+    D --> F[特征合并]
+    E --> F
+    F --> G[双向GRU]
+    G --> H[事件强度与类别分数]
+    H --> I[时间轴还原与事件解码]
+    I --> J[击球 / 落地]
+```
+
+网络在固定物理时间间隔上组织上下文，将全局场景特征与局部视觉状态结合，再判断事件类别和发生时刻。详细维度与分数计算见 [模型结构](docs/模型结构.md)。
+
+## 文档
+
+| 文档 | 内容 |
+| --- | --- |
+| [数据格式](docs/数据格式.md) | 目录组织、CSV、LabelMe、帧号和数据划分 |
+| [训练说明](docs/训练说明.md) | 训练参数、微调范围、断点恢复和自定义请求顺序 |
+| [推理与评价](docs/推理与评价.md) | 批量预测、JSON 字段、阈值选择和 holdout 评价 |
+| [模型结构](docs/模型结构.md) | 输入采样、视觉骨干、空间状态和时间建模 |
+| [开发与测试](docs/开发与测试.md) | 代码结构、测试覆盖和环境自检 |
+
+## 常见问题
+
+**可以实时处理视频流吗？**
+
+当前模型使用双向时序信息，面向完整视频的离线检测。
+
+**模型会输出球坐标或轨迹吗？**
+
+命令行输出事件类别、帧号、时间和分数。网络内部的空间注意力用于事件判断，不提供经过球定位评价的坐标输出。
+
+**CPU 能运行吗？**
+
+可以，训练和推理都支持 `--device cpu`。CPU 上建议训练时同时指定 `--precision fp32`；运行速度取决于视频长度和硬件。
+
+**为什么减小 batch-size 后，单窗口显存仍较高？**
+
+训练依次处理视频窗口并累积梯度。`batch-size` 控制一次参数更新累积多少个窗口，单窗口峰值主要由输入分辨率和上下文长度决定。
+
+**找不到 ffprobe 或命令行入口怎么办？**
+
+先执行 `conda activate tennis-contact`。环境由其他位置创建后，进入当前仓库执行 `python -m pip install -e '.[dev]'`，以注册当前代码的命令行入口。
+
+## 开发
+
+```bash
+conda activate tennis-contact
 pytest -q
 ```
 
-它是使用双向时间信息的离线模型。局部热点不保证等于真实球位置；挥拍但未接触球、落地前提前响应以及跨来源差异仍是已知错误。独立整理的验证范围见 [docs/验证记录.md](docs/验证记录.md)。
+问题反馈请附上运行命令、环境版本、错误信息和可复现的输入说明：[提交 Issue](https://github.com/ZSHYC/tennis-contact-rgb/issues)。

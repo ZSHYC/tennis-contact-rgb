@@ -384,7 +384,7 @@ def train(
             "secondary_thresholds": metadata.get(
                 "secondary_thresholds", {"hit": 0.67, "bounce": 0.57}
             ),
-            "description": metadata.get("description", "Standalone pure-RGB EO training checkpoint"),
+            "description": metadata.get("description", "TennisContactNet training checkpoint"),
         }
         packet = {
             "model": inference["model"],

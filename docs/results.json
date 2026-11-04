@@ -1,6 +1,5 @@
 {
   "model": "TennisContactNet",
-  "historical_name": "EO / trunk2:event_only / phase0",
   "parameters": 6797590,
   "validation": {
     "videos": 505,
@@ -682,7 +681,7 @@
     ]
   },
   "external": {
-    "official_e2e_1622": {
+    "e2e_1622": {
       "primary": {
         "thresholds": {
           "hit": 0.6,
@@ -800,7 +799,7 @@
         }
       }
     },
-    "historical_admin_6": {
+    "admin_6": {
       "primary": {
         "thresholds": {
           "hit": 0.6,
@@ -918,7 +917,7 @@
         }
       }
     },
-    "historical_holdout_45": {
+    "holdout_45": {
       "primary": {
         "thresholds": {
           "hit": 0.6,
@@ -1042,5 +1041,5 @@
     "nms_radius": 5,
     "readout": "local_peak"
   },
-  "note": "历史正式结果，独立代码整理未重跑完整六来源评价；不是新盲测，也未证明EO外部优于O。"
+  "note": "按数据分组、阈值配置、来源和事件类型组织的事件级统计；匹配和NMS参数见evaluation。"
 }
