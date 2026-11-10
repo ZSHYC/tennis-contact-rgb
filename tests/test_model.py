@@ -1,4 +1,5 @@
 import copy
+import json
 from pathlib import Path
 
 import pytest
@@ -47,6 +48,26 @@ def test_constructor_preserves_frozen_x3d_seed_contract():
         rtol=0,
         atol=0,
     )
+
+
+def test_forward_matches_frozen_pre_native_fixture():
+    fixture = json.loads((ROOT / "tests/fixtures/model_fp32.json").read_text())
+    old_threads = torch.get_num_threads()
+    try:
+        torch.set_num_threads(fixture["provenance"]["torch_threads"])
+        model, _ = load_model(ROOT / fixture["provenance"]["checkpoint"])
+        rgb = torch.arange(3 * 3 * 32 * 48).remainder(256).to(torch.uint8).reshape(3, 3, 32, 48)
+        with torch.inference_mode():
+            actual = model(rgb, precision="fp32")
+    finally:
+        torch.set_num_threads(old_threads)
+
+    # This fixture replaces executing the discarded PyTorchVideo builder in tests.
+    assert set(actual) == set(fixture["outputs"])
+    for name, record in fixture["outputs"].items():
+        expected = torch.tensor(record["values"]).reshape(record["shape"])
+        assert list(actual[name].shape) == record["shape"]
+        torch.testing.assert_close(actual[name], expected, rtol=1e-5, atol=1e-6)
 
 
 def test_inference_fusion_is_complete_close_and_idempotent():
