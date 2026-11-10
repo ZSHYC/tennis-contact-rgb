@@ -46,10 +46,11 @@ def test_input_and_precision_validation():
     with pytest.raises(ValueError, match="uint8"):
         model(torch.zeros(2, 3, 32, 32))
     with pytest.raises(ValueError, match="precision"):
-        model(torch.zeros(2, 3, 32, 32, dtype=torch.uint8), precision="fp16")
+        model(torch.zeros(2, 3, 32, 32, dtype=torch.uint8), precision="int8")
 
 
-def test_bf16_is_limited_to_visual_backbone():
+@pytest.mark.parametrize("precision,visual_dtype", [("bf16", torch.bfloat16), ("fp16", torch.float16)])
+def test_reduced_precision_is_limited_to_visual_backbone(precision, visual_dtype):
     model = TennisContactNet().eval()
     observed = {}
     conv = next(module for module in model.modules() if isinstance(module, torch.nn.Conv3d))
@@ -60,9 +61,9 @@ def test_bf16_is_limited_to_visual_backbone():
         ),
     ]
     with torch.inference_mode():
-        output = model(torch.zeros(2, 3, 32, 32, dtype=torch.uint8), precision="bf16")
+        output = model(torch.zeros(2, 3, 32, 32, dtype=torch.uint8), precision=precision)
     for hook in hooks:
         hook.remove()
 
-    assert observed == {"visual": torch.bfloat16, "temporal": torch.float32}
+    assert observed == {"visual": visual_dtype, "temporal": torch.float32}
     assert all(value.dtype == torch.float32 for value in output.values())

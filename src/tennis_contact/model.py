@@ -111,8 +111,8 @@ class TennisContactNet(nn.Module):
     def forward(self, rgb: torch.Tensor, *, precision: str = "fp32") -> dict[str, torch.Tensor]:
         if rgb.ndim != 4 or rgb.shape[1] != 3 or rgb.dtype != torch.uint8 or not len(rgb):
             raise ValueError("rgb must be nonempty uint8 [T,3,H,W]")
-        if precision not in {"fp32", "bf16"}:
-            raise ValueError("precision must be 'fp32' or 'bf16'")
+        if precision not in {"fp32", "bf16", "fp16"}:
+            raise ValueError("precision must be 'fp32', 'bf16', or 'fp16'")
         if rgb.device != self.image_mean.device:
             raise ValueError("rgb and model must be on the same device")
 
@@ -120,7 +120,8 @@ class TennisContactNet(nn.Module):
         with torch.autocast(device_type=device_type, enabled=False):
             values = rgb.float().div_(255).sub_(self.image_mean).div_(self.image_std)
             values = values.permute(1, 0, 2, 3).unsqueeze(0)
-            with torch.autocast(device_type=device_type, dtype=torch.bfloat16, enabled=precision == "bf16"):
+            autocast_dtype = torch.bfloat16 if precision == "bf16" else torch.float16
+            with torch.autocast(device_type=device_type, dtype=autocast_dtype, enabled=precision != "fp32"):
                 for stage in self.trunk[:4]:
                     values = stage(values)
                 s3 = values

@@ -23,6 +23,7 @@ MODE_SETTINGS = {
     "tf32": ("fp32", True),
     "bf16": ("bf16", False),
     "bf16_tf32": ("bf16", True),
+    "fp16": ("fp16", False),
 }
 THRESHOLDS = {
     "primary": {"hit": 0.60, "bounce": 0.48},
@@ -151,11 +152,14 @@ def quality_differences(reference, candidate) -> list[dict]:
         raise ValueError("quality reports have different cells")
     differences = []
     for cell in left:
-        delta = {key: right[cell][key] - left[cell][key] for key in ("tp", "fp", "fn", "precision", "recall", "f1")}
+        delta = {
+            key: right[cell][key] - left[cell][key]
+            for key in ("tp", "fp", "fn", "precision", "recall", "f1", "mean_error", "fp_per_minute")
+        }
         regressions = {
             key: value for key, value in delta.items()
             if (key in {"tp", "precision", "recall", "f1"} and value < 0)
-            or (key in {"fp", "fn"} and value > 0)
+            or (key in {"fp", "fn", "mean_error", "fp_per_minute"} and value > 0)
         }
         if any(value != 0 for value in delta.values()):
             differences.append({"cell": cell, "delta": delta, "regressions": regressions})
