@@ -53,8 +53,8 @@ def _video_path(path: Path) -> Path:
 def probe_video(video: Path) -> np.ndarray:
     video = _video_path(Path(video).resolve())
     command = [
-        "ffprobe", "-v", "error", "-select_streams", "v:0", "-show_frames",
-        "-show_entries", "frame=best_effort_timestamp:stream=time_base", "-of", "json", str(video),
+        "ffprobe", "-v", "error", "-select_streams", "v:0", "-show_packets",
+        "-show_entries", "packet=pts,flags:stream=time_base", "-of", "json", str(video),
     ]
     try:
         result = subprocess.run(command, check=True, capture_output=True, text=True)
@@ -67,7 +67,9 @@ def probe_video(video: Path) -> np.ndarray:
         if len(streams) != 1:
             raise ValueError
         time_base = float(Fraction(streams[0]["time_base"]))
-        values = [int(row["best_effort_timestamp"]) * time_base for row in payload["frames"]]
+        # B frames arrive in decode order; edit-list preroll is decoded but not displayed.
+        timestamps = sorted(int(row["pts"]) for row in payload["packets"] if "D" not in row["flags"])
+        values = [timestamp * time_base for timestamp in timestamps]
     except (KeyError, TypeError, ValueError, ZeroDivisionError, json.JSONDecodeError) as exc:
         raise ValueError(f"ffprobe returned invalid frame PTS: {video}") from exc
     times = np.asarray(values, dtype=np.float64)
@@ -289,7 +291,7 @@ class FrameReader:
         frame = cv2.imdecode(jpeg, cv2.IMREAD_COLOR) if encoded else None
         if frame is None:
             raise ValueError(f"JPEG95 roundtrip failed for frame {index}: {video}")
-        return torch.from_numpy(frame[:, :, ::-1].copy()).permute(2, 0, 1)
+        return torch.from_numpy(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)).permute(2, 0, 1)
 
     def read(self, video: Path, frame_indices: np.ndarray) -> torch.Tensor:
         video = _video_path(Path(video).resolve())
