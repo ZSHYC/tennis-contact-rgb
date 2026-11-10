@@ -1,7 +1,13 @@
+import numpy as np
 import pytest
 import torch
 
-from scripts.compare_precision import _forward_modes, quality_differences
+from scripts.compare_precision import (
+    _forward_modes,
+    _load_reference_scores,
+    _modes_to_compute,
+    quality_differences,
+)
 
 
 class _ModeModel(torch.nn.Module):
@@ -49,6 +55,23 @@ def test_precision_modes_use_declared_order_precision_and_tf32():
     ]
     assert fused.calls == [("fp32", False, False), ("fp16", False, False)]
     assert list(values) == list(seconds) == list(modes)
+
+
+def test_cached_reference_scores_are_reused_and_require_exact_frame_times(tmp_path):
+    root = tmp_path / "reference"
+    path = root / "validation" / "sample.npz"
+    path.parent.mkdir(parents=True)
+    frame_times = np.array([0.0, 0.04, 0.08])
+    scores = np.array([[0.1, 0.2], [0.3, 0.4], [0.5, 0.6]], dtype=np.float32)
+    np.savez(path, frame_times=frame_times, fp32=scores)
+    row = {"id": "sample", "axis": "validation"}
+
+    assert np.array_equal(_load_reference_scores(root, row, frame_times), scores)
+    assert _modes_to_compute(("fp32", "fused_fp32", "fused_fp16"), root) == (
+        "fused_fp32", "fused_fp16",
+    )
+    with pytest.raises(ValueError, match="frame_times"):
+        _load_reference_scores(root, row, frame_times + 1e-12)
 
 
 def test_quality_comparison_exposes_count_and_f1_regressions():

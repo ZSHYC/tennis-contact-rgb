@@ -139,6 +139,21 @@ def _sample(row) -> tuple[VideoSample, Path]:
     return sample, video
 
 
+def _load_reference_scores(root: Path, row, frame_times: np.ndarray) -> np.ndarray:
+    path = root / row["axis"] / f"{row['id']}.npz"
+    with np.load(path) as saved:
+        if not np.array_equal(saved["frame_times"], frame_times):
+            raise ValueError(f"reference frame_times changed: {row['id']}")
+        scores = saved["fp32"]
+        if scores.shape != (len(frame_times), 2) or not np.isfinite(scores).all():
+            raise ValueError(f"invalid reference scores: {row['id']}")
+        return scores.copy()
+
+
+def _modes_to_compute(modes, reference_scores: Path | None):
+    return tuple(mode for mode in modes if reference_scores is None or mode != "fp32")
+
+
 def _metric_rows(report):
     yield "overall", report["overall"]
     for event_type, metrics in report["by_type"].items():
@@ -170,7 +185,7 @@ def quality_differences(reference, candidate) -> list[dict]:
     return differences
 
 
-def _summarize(rows, output: Path, modes, costs) -> dict:
+def _summarize(rows, output: Path, modes, costs, baseline_origin=None) -> dict:
     samples_by_axis, predictions = {}, {mode: {} for mode in modes}
     coverage = {axis: 0 for axis in EXPECTED_COVERAGE}
     completed = []
@@ -212,7 +227,7 @@ def _summarize(rows, output: Path, modes, costs) -> dict:
                     if item["regressions"]:
                         regressions.append(item)
     complete = coverage == EXPECTED_COVERAGE
-    return {
+    result = {
         "status": "pass" if complete and not regressions else "needs_decision" if complete else "partial",
         "coverage": coverage,
         "completed_ids": completed,
@@ -223,6 +238,9 @@ def _summarize(rows, output: Path, modes, costs) -> dict:
         "differences": differences,
         "regressions": regressions,
     }
+    if baseline_origin is not None:
+        result["baseline_origin"] = baseline_origin
+    return result
 
 
 def main(argv=None) -> int:
@@ -232,6 +250,7 @@ def main(argv=None) -> int:
     parser.add_argument("--axes", nargs="+", choices=tuple(EXPECTED_COVERAGE), default=["validation"])
     parser.add_argument("--modes", nargs="+", choices=tuple(MODE_SETTINGS), default=list(DEFAULT_MODES))
     parser.add_argument("--checkpoint", type=Path, default=ROOT / "weights/best.pt")
+    parser.add_argument("--reference-scores", type=Path)
     parser.add_argument("--device", default="cuda")
     arguments = parser.parse_args(argv)
     modes = tuple(dict.fromkeys(arguments.modes))
@@ -239,12 +258,22 @@ def main(argv=None) -> int:
         parser.error("modes must include fp32 as the quality reference")
     if len(modes) < 2:
         parser.error("modes must include at least one candidate besides fp32")
+    reference_scores = arguments.reference_scores.resolve() if arguments.reference_scores else None
+    if reference_scores is not None and not reference_scores.is_dir():
+        parser.error("reference-scores must be a directory")
+    computed_modes = _modes_to_compute(modes, reference_scores)
+    baseline_origin = (
+        {"kind": "cached_historical_reference", "path": str(reference_scores)}
+        if reference_scores is not None else None
+    )
     rows = _rows(arguments.manifest.resolve(), set(arguments.axes))
     arguments.output.mkdir(parents=True, exist_ok=True)
     metadata = {
         "manifest": _identity(arguments.manifest), "checkpoint": _identity(arguments.checkpoint),
         "axes": list(dict.fromkeys(arguments.axes)), "modes": list(modes), "device": arguments.device,
     }
+    if baseline_origin is not None:
+        metadata["baseline_origin"] = baseline_origin
     metadata_path = arguments.output / "metadata.json"
     if metadata_path.is_file() and json.loads(metadata_path.read_text(encoding="utf-8")) != metadata:
         raise ValueError("output metadata differs; use another output directory")
@@ -259,7 +288,7 @@ def main(argv=None) -> int:
     target = torch.device(arguments.device)
     model, _model_metadata = load_model(arguments.checkpoint, "cpu")
     fused = copy.deepcopy(model).fuse_for_inference() if any(
-        MODE_SETTINGS[mode][0] == "fused" for mode in modes
+        MODE_SETTINGS[mode][0] == "fused" for mode in computed_modes
     ) else None
     models = {"base": model.to(target)}
     if fused is not None:
@@ -270,7 +299,13 @@ def main(argv=None) -> int:
         if produced:
             destination.parent.mkdir(parents=True, exist_ok=True)
             sample, video = _sample(row)
-            scores, cost = _predict_modes(models, video, sample.frame_times, modes, target)
+            cached_fp32 = (
+                _load_reference_scores(reference_scores, row, sample.frame_times)
+                if reference_scores is not None else None
+            )
+            scores, cost = _predict_modes(models, video, sample.frame_times, computed_modes, target)
+            if cached_fp32 is not None:
+                scores["fp32"] = cached_fp32
             temporary = destination.with_suffix(".tmp.npz")
             np.savez_compressed(temporary, frame_times=sample.frame_times, **scores)
             temporary.replace(destination)
@@ -285,12 +320,13 @@ def main(argv=None) -> int:
             "video": index, "of": len(rows), "sample_id": row["id"], "axis": row["axis"],
             "cost": cost, "completed": len(progress["completed"]),
         }), flush=True)
-    report = _summarize(rows, arguments.output, modes, progress["costs"])
+    report = _summarize(rows, arguments.output, modes, progress["costs"], baseline_origin)
     _write_json(arguments.output / "report.json", report)
     if report["status"] in {"pass", "needs_decision"}:
         _write_json(arguments.output / "quality-comparison.json", {
             "status": report["status"], "coverage": report["coverage"],
             "regressions": report["regressions"], "differences": report["differences"],
+            **({"baseline_origin": baseline_origin} if baseline_origin is not None else {}),
         })
     print(json.dumps({
         "status": report["status"], "coverage": report["coverage"],
