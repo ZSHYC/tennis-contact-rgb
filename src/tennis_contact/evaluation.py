@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from collections import defaultdict
 from itertools import product
 from typing import Any
 
@@ -34,18 +35,14 @@ def _thresholds(value: dict[str, float]) -> dict[str, float]:
 
 
 def _peak_indices(values: np.ndarray) -> list[int]:
-    groups: list[tuple[int, float]] = []
-    for index, value in enumerate(values):
-        score = float(value)
-        if not groups or score != groups[-1][1]:
-            groups.append((index, score))
-    return [
-        start
-        for index, (start, score) in enumerate(groups)
-        if score > 0
-        and (index == 0 or score > groups[index - 1][1])
-        and (index == len(groups) - 1 or score > groups[index + 1][1])
-    ]
+    if not len(values):
+        return []
+    starts = np.concatenate(([0], np.flatnonzero(values[1:] != values[:-1]) + 1))
+    grouped = values[starts]
+    peaks = grouped > 0
+    peaks[1:] &= grouped[1:] > grouped[:-1]
+    peaks[:-1] &= grouped[:-1] > grouped[1:]
+    return starts[peaks].tolist()
 
 
 def decode_events(
@@ -66,37 +63,111 @@ def decode_events(
             for frame_number in _peak_indices(values[:, column])
             if values[frame_number, column] >= limits[event_type]
         ]
-        kept: list[int] = []
+        occupied = np.zeros(len(values), dtype=bool)
         for frame_number, score in sorted(candidates, key=lambda item: (-item[1], item[0])):
-            if any(abs(frame_number - other) <= nms_radius for other in kept):
+            if occupied[frame_number]:
                 continue
-            kept.append(frame_number)
+            occupied[max(0, frame_number - nms_radius) : frame_number + nms_radius + 1] = True
             events.append({"frame_number": frame_number, "event_type": event_type, "score": score})
     return sorted(events, key=lambda event: (event["frame_number"], event["event_type"]))
 
 
-def _best(candidates):
-    return max(candidates, key=lambda item: (item[0], -item[1]))
+def _better(matches: int, error: int, best_matches: int, best_error: int) -> bool:
+    return matches > best_matches or matches == best_matches and error < best_error
+
+
+def _match_component(ground_truth, predictions, tolerance):
+    """Compact traceback with the legacy up, left, diagonal tie priority."""
+    previous_matches = [0] * (len(predictions) + 1)
+    previous_errors = [0] * (len(predictions) + 1)
+    directions = [bytearray(len(predictions) + 1) for _ in range(len(ground_truth) + 1)]
+    for row in range(1, len(ground_truth) + 1):
+        current_matches = [0] * (len(predictions) + 1)
+        current_errors = [0] * (len(predictions) + 1)
+        for column in range(1, len(predictions) + 1):
+            best_matches = previous_matches[column]
+            best_error = previous_errors[column]
+            direction = 1
+            if _better(current_matches[column - 1], current_errors[column - 1], best_matches, best_error):
+                best_matches = current_matches[column - 1]
+                best_error = current_errors[column - 1]
+                direction = 2
+            error = abs(ground_truth[row - 1]["frame_number"] - predictions[column - 1]["frame_number"])
+            if error <= tolerance:
+                matches = previous_matches[column - 1] + 1
+                total_error = previous_errors[column - 1] + error
+                if _better(matches, total_error, best_matches, best_error):
+                    best_matches, best_error, direction = matches, total_error, 3
+            current_matches[column] = best_matches
+            current_errors[column] = best_error
+            directions[row][column] = direction
+        previous_matches, previous_errors = current_matches, current_errors
+
+    matches = []
+    row, column = len(ground_truth), len(predictions)
+    while row and column:
+        direction = directions[row][column]
+        if direction == 1:
+            row -= 1
+        elif direction == 2:
+            column -= 1
+        else:
+            truth, predicted = ground_truth[row - 1], predictions[column - 1]
+            matches.append((truth, predicted, abs(truth["frame_number"] - predicted["frame_number"])))
+            row -= 1
+            column -= 1
+    matches.reverse()
+    return matches
 
 
 def _match_type(ground_truth, predictions, tolerance):
-    empty = (0, 0, ())
-    table = [[empty for _ in range(len(predictions) + 1)] for _ in range(len(ground_truth) + 1)]
-    for row in range(1, len(ground_truth) + 1):
-        for column in range(1, len(predictions) + 1):
-            choices = [table[row - 1][column], table[row][column - 1]]
-            error = abs(ground_truth[row - 1]["frame_number"] - predictions[column - 1]["frame_number"])
-            if error <= tolerance:
-                previous = table[row - 1][column - 1]
-                choices.append(
-                    (
-                        previous[0] + 1,
-                        previous[1] + error,
-                        previous[2] + ((ground_truth[row - 1], predictions[column - 1], error),),
-                    )
-                )
-            table[row][column] = _best(choices)
-    return list(table[-1][-1][2])
+    """Split the tolerance graph, then solve each independent ordered component."""
+    if not ground_truth or not predictions:
+        return []
+    parents = list(range(len(ground_truth) + len(predictions)))
+
+    def find(node):
+        while parents[node] != node:
+            parents[node] = parents[parents[node]]
+            node = parents[node]
+        return node
+
+    def union(left, right):
+        left, right = find(left), find(right)
+        if left != right:
+            parents[right] = left
+
+    edges = []
+    first_prediction = 0
+    for truth_index, truth in enumerate(ground_truth):
+        frame = truth["frame_number"]
+        while (
+            first_prediction < len(predictions)
+            and predictions[first_prediction]["frame_number"] < frame - tolerance
+        ):
+            first_prediction += 1
+        prediction_index = first_prediction
+        while (
+            prediction_index < len(predictions)
+            and predictions[prediction_index]["frame_number"] <= frame + tolerance
+        ):
+            union(truth_index, len(ground_truth) + prediction_index)
+            edges.append((truth_index, prediction_index))
+            prediction_index += 1
+
+    components = defaultdict(lambda: (set(), set()))
+    for truth_index, prediction_index in edges:
+        truth_indices, prediction_indices = components[find(truth_index)]
+        truth_indices.add(truth_index)
+        prediction_indices.add(prediction_index)
+
+    matches = []
+    ordered = sorted(components.values(), key=lambda component: min(component[0]))
+    for truth_indices, prediction_indices in ordered:
+        truth = [ground_truth[index] for index in sorted(truth_indices)]
+        predicted = [predictions[index] for index in sorted(prediction_indices)]
+        matches.extend(_match_component(truth, predicted, tolerance))
+    return matches
 
 
 def match_events(
@@ -121,6 +192,24 @@ def match_events(
     return matches
 
 
+def _match_count(ground_truth, predictions, tolerance):
+    """Maximum cardinality for ordered points; threshold search does not need a traceback."""
+    truth_frames = sorted(event["frame_number"] for event in ground_truth)
+    prediction_frames = sorted(event["frame_number"] for event in predictions)
+    truth_index = prediction_index = matched = 0
+    while truth_index < len(truth_frames) and prediction_index < len(prediction_frames):
+        truth, predicted = truth_frames[truth_index], prediction_frames[prediction_index]
+        if abs(truth - predicted) <= tolerance:
+            matched += 1
+            truth_index += 1
+            prediction_index += 1
+        elif truth < predicted:
+            truth_index += 1
+        else:
+            prediction_index += 1
+    return matched
+
+
 def _counts(tp: int, fp: int, fn: int, errors: list[int], minutes: float) -> dict[str, float | int]:
     precision = tp / (tp + fp) if tp + fp else 0.0
     recall = tp / (tp + fn) if tp + fn else 0.0
@@ -143,24 +232,15 @@ def _sample_minutes(sample) -> float:
     return float(times[-1] - times[0]) / 60 if len(times) > 1 else 0.0
 
 
-def _report(records, minutes, tolerance):
+def _report(records, minutes):
     by_type = {}
     all_errors = []
     totals = [0, 0, 0]
     for event_type in EVENT_TYPES:
-        truth = [event for _, gt, _ in records for event in gt if event["event_type"] == event_type]
-        predicted = [event for _, _, pred in records for event in pred if event["event_type"] == event_type]
-        matches = []
-        for _, gt, pred in records:
-            matches.extend(
-                match_events(
-                    [event for event in gt if event["event_type"] == event_type],
-                    [event for event in pred if event["event_type"] == event_type],
-                    tolerance,
-                )
-            )
-        errors = [match[2] for match in matches]
-        counts = (len(matches), len(predicted) - len(matches), len(truth) - len(matches))
+        truth = sum(record[1][event_type][0] for record in records)
+        predicted = sum(record[1][event_type][1] for record in records)
+        errors = [error for record in records for error in record[1][event_type][2]]
+        counts = (len(errors), predicted - len(errors), truth - len(errors))
         by_type[event_type] = _counts(*counts, errors, minutes)
         totals = [left + right for left, right in zip(totals, counts, strict=True)]
         all_errors.extend(errors)
@@ -186,14 +266,24 @@ def evaluate_predictions(
         scores = _scores(predictions[sample.id])
         if len(scores) != len(sample.frame_times):
             raise ValueError(f"prediction length does not match frame_times: {sample.id}")
-        records.append((sample.source, list(sample.events), decode_events(scores, thresholds)))
+        truth = list(sample.events)
+        predicted = decode_events(scores, thresholds)
+        matches = match_events(truth, predicted, tolerance)
+        statistics = {}
+        for event_type in EVENT_TYPES:
+            statistics[event_type] = (
+                sum(event["event_type"] == event_type for event in truth),
+                sum(event["event_type"] == event_type for event in predicted),
+                [error for gt, _prediction, error in matches if gt["event_type"] == event_type],
+            )
+        records.append((sample.source, statistics))
         minutes_by_source[sample.source] = minutes_by_source.get(sample.source, 0.0) + minutes
 
-    overall, by_type = _report(records, sum(minutes_by_source.values()), tolerance)
+    overall, by_type = _report(records, sum(minutes_by_source.values()))
     by_source = {}
     for source in sorted(minutes_by_source):
         source_overall, source_by_type = _report(
-            [record for record in records if record[0] == source], minutes_by_source[source], tolerance
+            [record for record in records if record[0] == source], minutes_by_source[source]
         )
         by_source[source] = {"overall": source_overall, "by_type": source_by_type}
     return {"overall": overall, "by_type": by_type, "by_source": by_source}
@@ -228,19 +318,20 @@ def search_thresholds(
                     for event in retained[sample.id]
                     if event["event_type"] == event_type and event["score"] >= threshold
                 ]
-                matched = len(match_events(truth, predicted))
+                matched = _match_count(truth, predicted, 5)
                 tp += matched
                 fp += len(predicted) - matched
                 fn += len(truth) - matched
             choices.append((threshold, tp, fp, fn))
         counts_by_type[event_type] = choices
 
-    ranked = []
-    for hit, bounce in product(counts_by_type["hit"], counts_by_type["bounce"]):
+    def rank(pair):
+        hit, bounce = pair
         tp, fp, fn = hit[1] + bounce[1], hit[2] + bounce[2], hit[3] + bounce[3]
-        f1 = 2 * tp / (2 * tp + fp + fn) if tp or fp or fn else 0.0
-        ranked.append((f1, -fp, hit[0], bounce[0]))
-    _, _, hit_threshold, bounce_threshold = max(ranked)
+        return (2 * tp / (2 * tp + fp + fn) if tp or fp or fn else 0.0, -fp, hit[0], bounce[0])
+
+    hit, bounce = max(product(counts_by_type["hit"], counts_by_type["bounce"]), key=rank)
+    hit_threshold, bounce_threshold = hit[0], bounce[0]
     return {"hit": hit_threshold, "bounce": bounce_threshold}
 
 

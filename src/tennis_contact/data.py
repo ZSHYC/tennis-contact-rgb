@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+from collections import OrderedDict
 import json
 import math
 import os
@@ -149,7 +150,7 @@ def _read_manifest(path: Path) -> list[dict]:
 
 def prepare_dataset(input_manifest: Path, output: Path) -> dict:
     input_manifest, output = Path(input_manifest).resolve(), Path(output).resolve()
-    prepared, seen, video_splits = [], set(), {}
+    prepared, seen, video_splits, frame_times = [], set(), {}, {}
     for row in _read_manifest(input_manifest):
         if not isinstance(row, dict):
             raise ValueError("each sample must be an object")
@@ -166,7 +167,9 @@ def prepare_dataset(input_manifest: Path, output: Path) -> dict:
         if video in video_splits and video_splits[video] != split:
             raise ValueError(f"video appears in multiple splits: {video}")
         video_splits[video] = split
-        times = probe_video(video)
+        times = frame_times.get(video)
+        if times is None:
+            times = frame_times[video] = probe_video(video)
         events = _load_annotations(row.get("events", row.get("annotations")), input_manifest.parent)
         if events and events[-1]["frame_number"] >= len(times):
             raise ValueError(f"event frame exceeds video: {sample_id}:{events[-1]['frame_number']}")
@@ -180,7 +183,9 @@ def prepare_dataset(input_manifest: Path, output: Path) -> dict:
         })
     result = {"schema": 1, "frame_numbering": "zero_based", "samples": prepared}
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    with output.open("w", encoding="utf-8") as handle:
+        json.dump(result, handle, ensure_ascii=False, indent=2)
+        handle.write("\n")
     return result
 
 
@@ -217,38 +222,103 @@ def load_dataset(manifest: Path, split: str | None = None) -> list[VideoSample]:
     return samples
 
 
-def read_frames(video: Path, frame_indices: np.ndarray) -> torch.Tensor:
-    import cv2
+class FrameReader:
+    """读取并有界复用已完成模型像素处理的帧。"""
 
-    video = _video_path(Path(video).resolve())
-    indices = np.asarray(frame_indices)
-    if indices.ndim != 1 or not np.issubdtype(indices.dtype, np.integer) or np.any(indices < 0):
-        raise ValueError("frame_indices must be a one-dimensional non-negative integer array")
-    if not len(indices):
-        return torch.empty((0, 3, *FRAME_SIZE), dtype=torch.uint8)
-    capture = cv2.VideoCapture(str(video))
-    decoded: dict[int, torch.Tensor] = {}
-    try:
-        requested = set(map(int, np.unique(indices)))
-        first, last = min(requested), max(requested)
-        capture.set(cv2.CAP_PROP_POS_FRAMES, first)
-        for index in range(first, last + 1):
-            if index not in requested:
-                if not capture.grab():
-                    raise ValueError(f"cannot advance to frame {index}: {video}")
+    # 超过完整模型窗口的间隔直接 seek，避免随机请求线性扫描。
+    _MAX_SEQUENTIAL_GAP = 156
+
+    def __init__(self, max_cached_frames: int = 256) -> None:
+        if isinstance(max_cached_frames, bool) or not isinstance(max_cached_frames, int) or max_cached_frames < 1:
+            raise ValueError("max_cached_frames must be a positive integer")
+        self.max_cached_frames = max_cached_frames
+        self._frames: OrderedDict[tuple[Path, int], torch.Tensor] = OrderedDict()
+        self._capture = None
+        self._video: Path | None = None
+        self._next_index = 0
+
+    def __enter__(self) -> FrameReader:
+        return self
+
+    def __exit__(self, *_exc_info) -> None:
+        self.close()
+
+    def close(self) -> None:
+        if self._capture is not None:
+            self._capture.release()
+        self._capture = None
+        self._video = None
+        self._next_index = 0
+        self._frames.clear()
+
+    def _open(self, video: Path) -> bool:
+        import cv2
+
+        if self._video == video and self._capture is not None:
+            return False
+        if self._capture is not None:
+            self._capture.release()
+        capture = cv2.VideoCapture(str(video))
+        if not capture.isOpened():
+            capture.release()
+            raise ValueError(f"cannot open video: {video}")
+        self._capture, self._video, self._next_index = capture, video, 0
+        return True
+
+    def _decode(self, video: Path, index: int) -> torch.Tensor:
+        import cv2
+
+        opened = self._open(video)
+        if index < self._next_index or (
+            index > self._next_index
+            and (opened or index - self._next_index > self._MAX_SEQUENTIAL_GAP)
+        ):
+            self._capture.set(cv2.CAP_PROP_POS_FRAMES, index)
+            self._next_index = index
+        while self._next_index < index:
+            if not self._capture.grab():
+                raise ValueError(f"cannot advance to frame {self._next_index}: {video}")
+            self._next_index += 1
+        ok, frame = self._capture.read()
+        if not ok:
+            raise ValueError(f"cannot decode frame {index}: {video}")
+        self._next_index = index + 1
+        frame = cv2.resize(frame, (FRAME_SIZE[1], FRAME_SIZE[0]), interpolation=cv2.INTER_AREA)
+        encoded, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
+        frame = cv2.imdecode(jpeg, cv2.IMREAD_COLOR) if encoded else None
+        if frame is None:
+            raise ValueError(f"JPEG95 roundtrip failed for frame {index}: {video}")
+        return torch.from_numpy(frame[:, :, ::-1].copy()).permute(2, 0, 1)
+
+    def read(self, video: Path, frame_indices: np.ndarray) -> torch.Tensor:
+        video = _video_path(Path(video).resolve())
+        indices = np.asarray(frame_indices)
+        if indices.ndim != 1 or not np.issubdtype(indices.dtype, np.integer) or np.any(indices < 0):
+            raise ValueError("frame_indices must be a one-dimensional non-negative integer array")
+        if not len(indices):
+            return torch.empty((0, 3, *FRAME_SIZE), dtype=torch.uint8)
+
+        requested = list(map(int, np.unique(indices)))
+        decoded: dict[int, torch.Tensor] = {}
+        for index in requested:
+            key = (video, index)
+            frame = self._frames.get(key)
+            if frame is not None:
+                self._frames.move_to_end(key)
+                decoded[index] = frame
+        for index in requested:
+            if index in decoded:
                 continue
-            ok, frame = capture.read()
-            if not ok:
-                raise ValueError(f"cannot decode frame {index}: {video}")
-            frame = cv2.resize(frame, (FRAME_SIZE[1], FRAME_SIZE[0]), interpolation=cv2.INTER_AREA)
-            encoded, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
-            frame = cv2.imdecode(jpeg, cv2.IMREAD_COLOR) if encoded else None
-            if frame is None:
-                raise ValueError(f"JPEG95 roundtrip failed for frame {index}: {video}")
-            decoded[int(index)] = torch.from_numpy(frame[:, :, ::-1].copy()).permute(2, 0, 1)
-    finally:
-        capture.release()
-    return torch.stack([decoded[int(index)] for index in indices])
+            frame = self._decode(video, index)
+            self._frames[(video, index)] = decoded[index] = frame
+            if len(self._frames) > self.max_cached_frames:
+                self._frames.popitem(last=False)
+        return torch.stack([decoded[int(index)] for index in indices])
+
+
+def read_frames(video: Path, frame_indices: np.ndarray) -> torch.Tensor:
+    with FrameReader() as reader:
+        return reader.read(video, frame_indices)
 
 
 def _nearest(frame_times: np.ndarray, targets: np.ndarray) -> np.ndarray:
@@ -268,35 +338,46 @@ def _logical_targets(frame_times: np.ndarray, logical: np.ndarray, rate: float) 
     return targets, valid
 
 
+class WindowSampler:
+    """一次构造视频的30Hz到原生帧映射，再切出各窗口。"""
+
+    def __init__(self, frame_times: np.ndarray, rate: float = 30.0) -> None:
+        times = np.asarray(frame_times, dtype=np.float64)
+        if times.ndim != 1 or not len(times) or not np.isfinite(times).all() or np.any(np.diff(times) <= 0):
+            raise ValueError("frame_times must be finite, one-dimensional, and strictly increasing")
+        if not math.isfinite(rate) or rate <= 0:
+            raise ValueError("rate must be finite and positive")
+        self.count = math.ceil(float(times[-1] - times[0]) * rate - 1e-8) + 1
+        self._logical = np.arange(self.count, dtype=np.int64)
+        self._targets, valid = _logical_targets(times, self._logical, rate)
+        self._logical, self._targets = self._logical[valid], self._targets[valid]
+        self._indices = _nearest(times, self._targets).astype(np.int64, copy=False)
+        self._repeated = np.bincount(self._indices, minlength=len(times))
+
+    def window(self, start: int, core_steps: int = 100, halo: int = 28) -> dict[str, np.ndarray]:
+        if not isinstance(start, (int, np.integer)) or start < 0 or core_steps < 1 or halo < 0:
+            raise ValueError("start/halo must be non-negative integers and core_steps must be positive")
+        if start >= self.count:
+            raise ValueError("window start is outside the logical video axis")
+        stop = min(self.count, start + core_steps)
+        first = np.searchsorted(self._logical, start - halo, side="left")
+        last = np.searchsorted(self._logical, stop + halo, side="left")
+        logical = self._logical[first:last]
+        targets = self._targets[first:last]
+        indices = self._indices[first:last]
+        core_mask = (logical >= start) & (logical < stop)
+        weights = core_mask.astype(np.float32) / np.maximum(self._repeated[indices], 1)
+        return {
+            "indices": indices,
+            "logical_indices": logical,
+            "times": targets,
+            "core_mask": core_mask,
+            "core_indices": np.flatnonzero(core_mask),
+            "weights": weights,
+        }
+
+
 def sample_window(
     frame_times: np.ndarray, start: int, core_steps: int = 100, halo: int = 28, rate: float = 30.0
 ) -> dict[str, np.ndarray]:
-    times = np.asarray(frame_times, dtype=np.float64)
-    if times.ndim != 1 or not len(times) or not np.isfinite(times).all() or np.any(np.diff(times) <= 0):
-        raise ValueError("frame_times must be finite, one-dimensional, and strictly increasing")
-    if not isinstance(start, (int, np.integer)) or start < 0 or core_steps < 1 or halo < 0:
-        raise ValueError("start/halo must be non-negative integers and core_steps must be positive")
-    if not math.isfinite(rate) or rate <= 0:
-        raise ValueError("rate must be finite and positive")
-    count = math.ceil(float(times[-1] - times[0]) * rate - 1e-8) + 1
-    if start >= count:
-        raise ValueError("window start is outside the logical video axis")
-    stop = min(count, start + core_steps)
-    logical = np.arange(start - halo, stop + halo, dtype=np.int64)
-    targets, valid = _logical_targets(times, logical, rate)
-    logical, targets = logical[valid], targets[valid]
-    indices = _nearest(times, targets)
-    core_mask = (logical >= start) & (logical < stop)
-
-    full_logical = np.arange(count, dtype=np.int64)
-    full_targets, full_valid = _logical_targets(times, full_logical, rate)
-    repeated = np.bincount(_nearest(times, full_targets[full_valid]), minlength=len(times))
-    weights = core_mask.astype(np.float32) / np.maximum(repeated[indices], 1)
-    return {
-        "indices": indices.astype(np.int64, copy=False),
-        "logical_indices": logical,
-        "times": targets,
-        "core_mask": core_mask,
-        "core_indices": np.flatnonzero(core_mask),
-        "weights": weights,
-    }
+    return WindowSampler(frame_times, rate).window(start, core_steps, halo)

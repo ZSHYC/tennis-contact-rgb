@@ -21,3 +21,4 @@ def test_write_json_keeps_chinese_and_rejects_nan(tmp_path):
     with pytest.raises(ValueError):
         write_json(output, {"bad": float("nan")})
     assert json.loads(output.read_text())["模型"] == "网球"
+    assert not output.with_name(output.name + ".tmp").exists()

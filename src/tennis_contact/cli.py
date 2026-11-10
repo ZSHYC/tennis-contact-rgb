@@ -3,15 +3,20 @@
 import argparse
 import json
 from pathlib import Path
+from time import perf_counter
 
 
 def write_json(path, value):
-    text = json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False) + "\n"
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.name + ".tmp")
-    temporary.write_text(text, encoding="utf-8")
-    temporary.replace(path)
+    try:
+        with temporary.open("w", encoding="utf-8") as handle:
+            json.dump(value, handle, ensure_ascii=False, indent=2, allow_nan=False)
+            handle.write("\n")
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def parser():
@@ -57,6 +62,7 @@ def parser():
 
 
 def main(argv=None):
+    started = perf_counter()
     arguments = parser().parse_args(argv)
     if arguments.threads < 1:
         raise ValueError("threads 必须为正整数")
@@ -88,7 +94,7 @@ def main(argv=None):
             result = predict_video(model, arguments.video, probe_video(arguments.video),
                                    device=arguments.device, thresholds=thresholds)
             write_json(arguments.output, result)
-            print(json.dumps(result["cost"]))
+            print(json.dumps({**result["cost"], "command_elapsed_seconds": perf_counter() - started}))
         else:
             samples = load_dataset(arguments.dataset, arguments.split)
             if not samples:
@@ -98,7 +104,8 @@ def main(argv=None):
                                        device=arguments.device, thresholds=thresholds)
                 result["sample_id"] = sample.id
                 write_json(arguments.output / f"{sample.id}.json", result)
-                print(json.dumps({"sample_id": sample.id, **result["cost"]}), flush=True)
+                print(json.dumps({"sample_id": sample.id, **result["cost"],
+                                  "command_elapsed_seconds": perf_counter() - started}), flush=True)
     else:
         import numpy as np
         from .data import load_dataset

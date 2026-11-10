@@ -17,8 +17,9 @@ import numpy as np
 import torch
 from torch.nn import functional as F
 
-from .data import load_dataset, read_frames, sample_window
+from .data import FrameReader, WindowSampler, load_dataset
 from .model import TennisContactNet
+from .pipeline import prefetch
 
 
 POSITIVE_WEIGHT = 14.330945259756955
@@ -29,23 +30,39 @@ TYPE_RADIUS_SECONDS = 0.08
 _STOP_REQUESTED = False
 
 
-def _targets(sample: Any, window: dict[str, Any], device: torch.device) -> dict[str, torch.Tensor]:
+def _targets(
+    sample: Any,
+    window: dict[str, Any],
+    device: torch.device,
+    native: dict[str, np.ndarray] | None = None,
+) -> dict[str, torch.Tensor]:
     """按观测到的原生帧PTS构造事件软目标。"""
     indices = np.asarray(window["indices"], dtype=np.int64)
-    times = np.asarray(sample.frame_times, dtype=np.float64)[indices]
     weights = torch.as_tensor(window["weights"], dtype=torch.float32, device=device)
     core = torch.as_tensor(window["core_mask"], dtype=torch.bool, device=device)
     if len(indices) == 0 or weights.shape != core.shape or weights.shape != (len(indices),):
         raise ValueError("window indices, weights, and core_mask must have one common nonempty length")
     weights = weights * core
 
+    native = _native_targets(sample) if native is None else native
+    return {
+        "weights": weights,
+        "eventness": torch.as_tensor(native["eventness"][indices], device=device),
+        "types": torch.as_tensor(native["types"][indices], device=device),
+        "type_mask": torch.as_tensor(native["type_mask"][indices], device=device),
+    }
+
+
+def _native_targets(sample: Any) -> dict[str, np.ndarray]:
+    """为一个视频的原生帧一次性构造目标。"""
+    times = np.asarray(sample.frame_times, dtype=np.float64)
+
     events = [event for event in sample.events if event.get("event_type") in {"hit", "bounce"}]
     if not events:
         return {
-            "weights": weights,
-            "eventness": torch.zeros(len(indices), device=device),
-            "types": torch.zeros(len(indices), dtype=torch.long, device=device),
-            "type_mask": torch.zeros(len(indices), dtype=torch.bool, device=device),
+            "eventness": np.zeros(len(times), dtype=np.float32),
+            "types": np.zeros(len(times), dtype=np.int64),
+            "type_mask": np.zeros(len(times), dtype=bool),
         }
 
     frames = np.asarray([int(event["frame_number"]) for event in events], dtype=np.int64)
@@ -53,25 +70,38 @@ def _targets(sample: Any, window: dict[str, Any], device: torch.device) -> dict[
         raise ValueError(f"event frame is outside video {sample.id!r}")
     event_times = np.asarray(sample.frame_times, dtype=np.float64)[frames]
     event_types = np.asarray([event["event_type"] == "bounce" for event in events], dtype=np.int64)
-    distances = np.abs(times[:, None] - event_times[None, :])
-    chosen = distances.argmin(axis=1)
-    nearest = distances[np.arange(len(times)), chosen]
+    order = np.argsort(event_times, kind="stable")
+    sorted_times = event_times[order]
+    right = np.searchsorted(sorted_times, times).clip(max=len(sorted_times) - 1)
+    left = (right - 1).clip(min=0)
+    left_distance = np.abs(times - sorted_times[left])
+    right_distance = np.abs(times - sorted_times[right])
+    choose_right = (right_distance < left_distance) | (
+        (right_distance == left_distance) & (order[right] < order[left])
+    )
+    chosen = order[np.where(choose_right, right, left)]
+    nearest = np.minimum(left_distance, right_distance)
     types = event_types[chosen]
-    tied = np.isclose(distances, nearest[:, None], atol=1e-9, rtol=0.0)
-    ambiguous = np.any(tied & (event_types[None, :] != types[:, None]), axis=1)
+
+    nearest_by_type = []
+    for event_type in (0, 1):
+        typed = np.sort(event_times[event_types == event_type])
+        if not len(typed):
+            nearest_by_type.append(np.full(len(times), np.inf))
+            continue
+        typed_right = np.searchsorted(typed, times).clip(max=len(typed) - 1)
+        typed_left = (typed_right - 1).clip(min=0)
+        nearest_by_type.append(
+            np.minimum(np.abs(times - typed[typed_left]), np.abs(times - typed[typed_right]))
+        )
+    opposite_distance = np.where(types == 0, nearest_by_type[1], nearest_by_type[0])
+    ambiguous = np.isclose(opposite_distance, nearest, atol=1e-9, rtol=0.0)
     return {
-        "weights": weights,
-        "eventness": torch.as_tensor(
-            np.exp(-0.5 * np.square(nearest / EVENT_SIGMA_SECONDS)),
-            dtype=torch.float32,
-            device=device,
+        "eventness": np.asarray(
+            np.exp(-0.5 * np.square(nearest / EVENT_SIGMA_SECONDS)), dtype=np.float32
         ),
-        "types": torch.as_tensor(types, dtype=torch.long, device=device),
-        "type_mask": torch.as_tensor(
-            (nearest <= TYPE_RADIUS_SECONDS + 1e-9) & ~ambiguous,
-            dtype=torch.bool,
-            device=device,
-        ),
+        "types": types,
+        "type_mask": (nearest <= TYPE_RADIUS_SECONDS + 1e-9) & ~ambiguous,
     }
 
 
@@ -81,6 +111,17 @@ def loss_sums(
     positive_weight: float = POSITIVE_WEIGHT,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """计算加权事件BCE与联合分数类型BCE的分子。"""
+    event_sum, joint_sum = _loss_sums(output, targets, positive_weight)
+    if not bool(torch.stack((event_sum, joint_sum)).isfinite().all()):
+        raise FloatingPointError("training loss is nonfinite")
+    return event_sum, joint_sum
+
+
+def _loss_sums(
+    output: dict[str, torch.Tensor],
+    targets: dict[str, torch.Tensor],
+    positive_weight: float,
+) -> tuple[torch.Tensor, torch.Tensor]:
     event = output["eventness_logit"].float()
     types = output["type_logits"].float()
     weights, y = targets["weights"], targets["eventness"]
@@ -108,8 +149,6 @@ def loss_sums(
     joint_target = torch.zeros_like(types).scatter(1, labels[:, None], adjusted[:, None])
     joint_rows = -(joint_target * log_p + (1 - joint_target) * log_not_p).sum(dim=-1)
     joint_sum = (joint_rows * weights * mask).sum()
-    if not bool(event_sum.isfinite()) or not bool(joint_sum.isfinite()):
-        raise FloatingPointError("training loss is nonfinite")
     return event_sum, joint_sum
 
 
@@ -171,17 +210,43 @@ def _set_scope(model: torch.nn.Module, scope: str) -> list[torch.nn.Parameter]:
     return selected
 
 
-def _class_balance(samples: list[Any], order: list[tuple[int, int, bool]]) -> float:
+def _class_balance(
+    samples: list[Any],
+    order: list[tuple[int, int, bool]],
+    native: list[dict[str, np.ndarray]] | None = None,
+    samplers: list[WindowSampler] | None = None,
+) -> float:
     total = positive = 0.0
+    seen = set()
+    native = [_native_targets(sample) for sample in samples] if native is None else native
+    samplers = [WindowSampler(sample.frame_times) for sample in samples] if samplers is None else samplers
     for sample_index, start, _mirror in order:
-        sample = samples[sample_index]
-        window = sample_window(sample.frame_times, start, core_steps=100, halo=28, rate=30.0)
-        targets = _targets(sample, window, torch.device("cpu"))
-        total += float(targets["weights"].sum())
-        positive += float((targets["weights"] * targets["eventness"]).sum())
+        if (sample_index, start) in seen:
+            continue
+        seen.add((sample_index, start))
+        window = samplers[sample_index].window(start, core_steps=100, halo=28)
+        indices = np.asarray(window["indices"], dtype=np.int64)
+        weights = np.asarray(window["weights"], dtype=np.float32)
+        weight_tensor = torch.from_numpy(weights)
+        total += float(weight_tensor.sum())
+        positive += float(
+            (weight_tensor * torch.from_numpy(native[sample_index]["eventness"][indices])).sum()
+        )
     if not 0 < positive < total:
         raise ValueError("training split must contain both event and background mass")
     return (total - positive) / positive
+
+
+def _event_denominator(targets: list[dict[str, torch.Tensor]], device: torch.device) -> float:
+    if device.type == "cuda":
+        for target in targets:
+            if not target["weights"].is_pinned():
+                target["weights"] = target["weights"].pin_memory()
+        sums = torch.stack([
+            target["weights"].to(device, non_blocking=True).sum() for target in targets
+        ])
+        return sum(sums.cpu().tolist())
+    return sum(float(target["weights"].sum()) for target in targets)
 
 
 def _rng_state(device: torch.device) -> dict[str, Any]:
@@ -238,11 +303,6 @@ def _atomic_save(path: Path, packet: dict[str, Any]) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def _sync(device: torch.device) -> None:
-    if device.type == "cuda":
-        torch.cuda.synchronize(device)
-
-
 def _signal_handler(_number: int, _frame: Any) -> None:
     global _STOP_REQUESTED
     _STOP_REQUESTED = True
@@ -295,17 +355,6 @@ def train(
     samples = load_dataset(manifest, split="train")
     resolved_order_path = None if order_path is None else Path(order_path).resolve()
     order, order_specification = _request_order(samples, epochs, resolved_order_path)
-    calculated_positive_weight = _class_balance(samples, order)
-    positive_weight = calculated_positive_weight
-    if order_specification is not None and "positive_weight" in order_specification:
-        recorded = order_specification["positive_weight"]
-        if (
-            not isinstance(recorded, (int, float))
-            or not math.isfinite(recorded)
-            or not math.isclose(recorded, calculated_positive_weight, rel_tol=0.0, abs_tol=1e-5)
-        ):
-            raise ValueError("recorded positive_weight differs from rebuilt training targets")
-        positive_weight = float(recorded)
     dataset = [
         {
             "id": sample.id,
@@ -316,6 +365,33 @@ def train(
         }
         for sample in samples
     ]
+    packet = None if resume is None else torch.load(Path(resume), map_location="cpu", weights_only=False)
+    native_targets = None
+    samplers = None
+    if packet is None:
+        native_targets = [_native_targets(sample) for sample in samples]
+        samplers = [WindowSampler(sample.frame_times) for sample in samples]
+        calculated_positive_weight = _class_balance(samples, order, native_targets, samplers)
+        positive_weight = calculated_positive_weight
+        if order_specification is not None and "positive_weight" in order_specification:
+            recorded = order_specification["positive_weight"]
+            if (
+                not isinstance(recorded, (int, float))
+                or not math.isfinite(recorded)
+                or not math.isclose(recorded, calculated_positive_weight, rel_tol=0.0, abs_tol=1e-5)
+            ):
+                raise ValueError("recorded positive_weight differs from rebuilt training targets")
+            positive_weight = float(recorded)
+    else:
+        stored_config = packet.get("training_config", {})
+        calculated_positive_weight = stored_config.get("calculated_positive_weight")
+        positive_weight = stored_config.get("positive_weight")
+        if not all(
+            isinstance(value, (int, float)) and math.isfinite(value) and value > 0
+            for value in (calculated_positive_weight, positive_weight)
+        ):
+            raise ValueError("resume checkpoint contains invalid class balance")
+        del stored_config
     config = {
         "manifest": str(manifest),
         "order_path": None if resolved_order_path is None else str(resolved_order_path),
@@ -347,6 +423,7 @@ def train(
                 raise ValueError("initial checkpoint must contain model")
             model.load_state_dict(initial["model"], strict=True)
             metadata = {key: deepcopy(value) for key, value in initial.items() if key != "model"}
+            del initial
         parameters = _set_scope(model, scope)
         optimizer = torch.optim.AdamW(parameters, lr=lr, weight_decay=0.01)
         cursor = steps = 0
@@ -357,7 +434,6 @@ def train(
             "updates": 0,
         }
     else:
-        packet = torch.load(Path(resume), map_location="cpu", weights_only=False)
         if packet.get("training_config") != config or packet.get("order") != order:
             raise ValueError("resume training configuration or request order differs")
         model.load_state_dict(packet["model"], strict=True)
@@ -373,9 +449,14 @@ def train(
         }:
             raise ValueError("resume cost state differs")
         _restore_rng(packet["rng"], device)
+        del packet
     model.train()
     start_steps = steps
     video_read_seconds = forward_backward_seconds = 0.0
+    if cursor < len(order) and (max_steps is None or steps < max_steps) and native_targets is None:
+        native_targets = [_native_targets(sample) for sample in samples]
+    if cursor < len(order) and (max_steps is None or steps < max_steps) and samplers is None:
+        samplers = [WindowSampler(sample.frame_times) for sample in samples]
 
     def save(status: str) -> dict[str, Any]:
         inference = {
@@ -409,47 +490,107 @@ def train(
         _atomic_save(inference_path, inference)
         return packet
 
-    with _signals():
-        while cursor < len(order) and (max_steps is None or steps < max_steps):
-            batch = order[cursor : cursor + batch_size]
-            prepared = []
-            for sample_index, start, mirror in batch:
-                sample = samples[sample_index]
-                window = sample_window(sample.frame_times, start, core_steps=100, halo=28, rate=30.0)
-                prepared.append((sample, window, mirror, _targets(sample, window, device)))
-            event_denominator = sum(float(row[3]["weights"].sum()) for row in prepared)
-            if not math.isfinite(event_denominator) or event_denominator <= 0:
-                raise ValueError("batch has no weighted core frames")
+    remaining_updates = math.inf if max_steps is None else max_steps - steps
+    request_stop = (
+        max(cursor, min(len(order), cursor + int(remaining_updates * batch_size)))
+        if math.isfinite(remaining_updates)
+        else len(order)
+    )
 
-            optimizer.zero_grad(set_to_none=True)
-            for sample, window, mirror, targets in prepared:
-                tick = perf_counter()
-                rgb = read_frames(sample.video, np.asarray(window["indices"], dtype=np.int64)).to(device)
-                _sync(device)
-                video_read_seconds += perf_counter() - tick
+    def requests():
+        position = cursor
+        while position < request_stop:
+            prepared = []
+            for sample_index, start, mirror in order[position : min(request_stop, position + batch_size)]:
+                sample = samples[sample_index]
+                window = samplers[sample_index].window(start, core_steps=100, halo=28)
+                targets = _targets(sample, window, torch.device("cpu"), native_targets[sample_index])
+                prepared.append((sample, window, mirror, targets))
+            batch_targets = [row[3] for row in prepared]
+            for index, row in enumerate(prepared, 1):
+                yield *row, batch_targets if index == 1 else None, index == len(prepared)
+            position += len(prepared)
+
+    with FrameReader(max_cached_frames=160) as reader:
+        def load(row):
+            sample, window, mirror, targets, batch_targets, batch_last = row
+            tick = perf_counter()
+            rgb = reader.read(sample.video, np.asarray(window["indices"], dtype=np.int64))
+            if device.type == "cuda":
+                rgb = rgb.pin_memory()
+                targets = {key: value.pin_memory() for key, value in targets.items()}
+            return mirror, targets, batch_targets, batch_last, rgb, perf_counter() - tick
+
+        with _signals(), prefetch(requests(), load) as loaded:
+            batch_count = 0
+            for mirror, cpu_targets, batch_targets, batch_last, rgb, read_seconds in loaded:
+                if batch_count == 0:
+                    event_denominator = _event_denominator(batch_targets, device)
+                    if not math.isfinite(event_denominator) or event_denominator <= 0:
+                        raise ValueError("batch has no weighted core frames")
+                    optimizer.zero_grad(set_to_none=True)
+                    cuda_timings = []
+                    transfer_timings = []
+                    batch_finite = None
+                batch_count += 1
+                video_read_seconds += read_seconds
+                if device.type == "cuda":
+                    transfer = (torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True))
+                    transfer[0].record()
+                    transfer_timings.append(transfer)
+                rgb = rgb.to(device, non_blocking=device.type == "cuda")
+                targets = {
+                    key: value.to(device, non_blocking=device.type == "cuda")
+                    for key, value in cpu_targets.items()
+                }
+                if device.type == "cuda":
+                    transfer[1].record()
                 if mirror:
                     rgb = torch.flip(rgb, (-1,))
-                tick = perf_counter()
-                event_sum, joint_sum = loss_sums(
+                if device.type == "cuda":
+                    timing = (torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True))
+                    timing[0].record()
+                    cuda_timings.append(timing)
+                else:
+                    tick = perf_counter()
+                event_sum, joint_sum = _loss_sums(
                     model(rgb, precision=precision), targets, positive_weight
                 )
+                finite = torch.stack((event_sum, joint_sum)).isfinite().all().detach()
+                batch_finite = finite if batch_finite is None else batch_finite & finite
                 loss = event_sum / event_denominator
                 loss = loss + TYPE_WEIGHT * joint_sum / TYPE_DENOMINATOR
                 loss.backward()
-                _sync(device)
-                forward_backward_seconds += perf_counter() - tick
-            tick = perf_counter()
-            torch.nn.utils.clip_grad_norm_(parameters, 1.0, error_if_nonfinite=True)
-            optimizer.step()
-            _sync(device)
-            forward_backward_seconds += perf_counter() - tick
-            cursor += len(batch)
-            steps += 1
-            if _STOP_REQUESTED:
-                save("interrupted")
-                break
-            if steps % 64 == 0:
-                save("running")
+                if device.type == "cuda":
+                    timing[1].record()
+                else:
+                    forward_backward_seconds += perf_counter() - tick
+                if not batch_last:
+                    continue
+                if not bool(batch_finite):
+                    raise FloatingPointError("training loss is nonfinite")
+                if device.type == "cuda":
+                    timing = (torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True))
+                    timing[0].record()
+                    cuda_timings.append(timing)
+                else:
+                    tick = perf_counter()
+                torch.nn.utils.clip_grad_norm_(parameters, 1.0, error_if_nonfinite=True)
+                optimizer.step()
+                if device.type == "cuda":
+                    timing[1].record()
+                    timing[1].synchronize()
+                    video_read_seconds += sum(start.elapsed_time(end) for start, end in transfer_timings) / 1000
+                    forward_backward_seconds += sum(start.elapsed_time(end) for start, end in cuda_timings) / 1000
+                else:
+                    forward_backward_seconds += perf_counter() - tick
+                cursor += batch_count
+                batch_count = 0
+                steps += 1
+                if _STOP_REQUESTED:
+                    break
+                if steps % 64 == 0 and cursor < len(order) and (max_steps is None or steps < max_steps):
+                    save("running")
     status = "interrupted" if _STOP_REQUESTED else "complete" if cursor == len(order) else "paused"
     save(status)
     wall_seconds = perf_counter() - started

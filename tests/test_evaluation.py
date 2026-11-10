@@ -1,7 +1,10 @@
 from types import SimpleNamespace
+import random
 
 import numpy as np
 import pytest
+
+import tennis_contact.evaluation as evaluation
 
 from tennis_contact.evaluation import (
     PRIMARY_THRESHOLDS,
@@ -55,6 +58,44 @@ def test_match_events_never_crosses_types_and_maximizes_cardinality_before_error
     assert matches == [(hit_zero, pred_zero, 0), (hit_two, pred_one, 1)]
 
 
+def _legacy_match_type(ground_truth, predictions, tolerance):
+    empty = (0, 0, ())
+    table = [[empty for _ in range(len(predictions) + 1)] for _ in range(len(ground_truth) + 1)]
+    for row in range(1, len(ground_truth) + 1):
+        for column in range(1, len(predictions) + 1):
+            choices = [table[row - 1][column], table[row][column - 1]]
+            error = abs(ground_truth[row - 1]["frame_number"] - predictions[column - 1]["frame_number"])
+            if error <= tolerance:
+                previous = table[row - 1][column - 1]
+                choices.append((
+                    previous[0] + 1,
+                    previous[1] + error,
+                    previous[2] + ((ground_truth[row - 1], predictions[column - 1], error),),
+                ))
+            table[row][column] = max(choices, key=lambda item: (item[0], -item[1]))
+    return list(table[-1][-1][2])
+
+
+def test_match_events_preserves_legacy_tie_breaking_on_random_inputs():
+    rng = random.Random(7)
+    for _ in range(100):
+        truth = [
+            {"frame_number": rng.randrange(20), "event_type": "hit", "id": index}
+            for index in range(rng.randrange(8))
+        ]
+        predicted = [
+            {"frame_number": rng.randrange(20), "event_type": "hit", "score": rng.random(), "id": index}
+            for index in range(rng.randrange(8))
+        ]
+        expected = _legacy_match_type(
+            sorted(truth, key=lambda event: event["frame_number"]),
+            sorted(predicted, key=lambda event: event["frame_number"]),
+            2,
+        )
+        assert match_events(truth, predicted, tolerance=2) == expected
+        assert evaluation._match_count(truth, predicted, tolerance=2) == len(expected)
+
+
 def test_evaluate_aggregates_sources_and_handles_a_source_with_no_ground_truth():
     samples = [
         sample("a", "broadcast", "holdout", [{"frame_number": 2, "event_type": "hit"}], 11),
@@ -93,6 +134,26 @@ def test_evaluate_honors_the_requested_matching_tolerance():
     assert report["overall"]["tp"] == 0
     assert report["overall"]["fp"] == 1
     assert report["overall"]["fn"] == 1
+
+
+def test_evaluate_matches_each_video_once_before_aggregating(monkeypatch):
+    samples = [
+        sample("a", "same", "holdout", [{"frame_number": 2, "event_type": "hit"}], 10),
+        sample("b", "same", "holdout", [{"frame_number": 4, "event_type": "bounce"}], 10),
+    ]
+    predictions = {sample.id: np.zeros((10, 2), dtype=np.float64) for sample in samples}
+    calls = 0
+    original = evaluation.match_events
+
+    def counted(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(evaluation, "match_events", counted)
+    evaluate_predictions(samples, predictions, PRIMARY_THRESHOLDS)
+
+    assert calls == len(samples)
 
 
 def test_search_thresholds_uses_joint_f1_not_independent_class_optima():

@@ -118,7 +118,7 @@ class TennisContactNet(nn.Module):
 
         device_type = rgb.device.type
         with torch.autocast(device_type=device_type, enabled=False):
-            values = (rgb.float().div(255) - self.image_mean) / self.image_std
+            values = rgb.float().div_(255).sub_(self.image_mean).div_(self.image_std)
             values = values.permute(1, 0, 2, 3).unsqueeze(0)
             with torch.autocast(device_type=device_type, dtype=torch.bfloat16, enabled=precision == "bf16"):
                 for stage in self.trunk[:4]:
