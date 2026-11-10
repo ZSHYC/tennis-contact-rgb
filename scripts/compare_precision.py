@@ -247,6 +247,7 @@ def main(argv=None) -> int:
         if progress_path.is_file() else {"completed": [], "costs": {}}
     )
 
+    torch.set_num_threads(4)
     target = torch.device(arguments.device)
     model, _model_metadata = load_model(arguments.checkpoint, target)
     for index, row in enumerate(rows, 1):
