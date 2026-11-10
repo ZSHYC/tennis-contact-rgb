@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import csv
-from collections import OrderedDict
+from collections import OrderedDict, deque
+from concurrent.futures import ThreadPoolExecutor
 import json
 import math
 import os
@@ -239,6 +240,7 @@ class FrameReader:
         self._capture = None
         self._video: Path | None = None
         self._next_index = 0
+        self._executor: ThreadPoolExecutor | None = None
 
     def __enter__(self) -> FrameReader:
         return self
@@ -249,9 +251,12 @@ class FrameReader:
     def close(self) -> None:
         if self._capture is not None:
             self._capture.release()
+        if self._executor is not None:
+            self._executor.shutdown(wait=True, cancel_futures=True)
         self._capture = None
         self._video = None
         self._next_index = 0
+        self._executor = None
         self._frames.clear()
 
     def _open(self, video: Path) -> bool:
@@ -268,7 +273,7 @@ class FrameReader:
         self._capture, self._video, self._next_index = capture, video, 0
         return True
 
-    def _decode(self, video: Path, index: int) -> torch.Tensor:
+    def _decode(self, video: Path, index: int) -> np.ndarray:
         import cv2
 
         opened = self._open(video)
@@ -286,6 +291,12 @@ class FrameReader:
         if not ok:
             raise ValueError(f"cannot decode frame {index}: {video}")
         self._next_index = index + 1
+        return frame
+
+    @staticmethod
+    def _process_frame(frame: np.ndarray, video: Path, index: int) -> torch.Tensor:
+        import cv2
+
         frame = cv2.resize(frame, (FRAME_SIZE[1], FRAME_SIZE[0]), interpolation=cv2.INTER_AREA)
         encoded, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
         frame = cv2.imdecode(jpeg, cv2.IMREAD_COLOR) if encoded else None
@@ -309,13 +320,33 @@ class FrameReader:
             if frame is not None:
                 self._frames.move_to_end(key)
                 decoded[index] = frame
-        for index in requested:
-            if index in decoded:
-                continue
-            frame = self._decode(video, index)
-            self._frames[(video, index)] = decoded[index] = frame
-            if len(self._frames) > self.max_cached_frames:
-                self._frames.popitem(last=False)
+        missing = [index for index in requested if index not in decoded]
+        if missing:
+            if self._executor is None:
+                self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="rgb-pixels")
+            pending = deque()
+
+            def resolve() -> None:
+                index, future = pending.popleft()
+                frame = future.result()
+                self._frames[(video, index)] = decoded[index] = frame
+                if len(self._frames) > self.max_cached_frames:
+                    self._frames.popitem(last=False)
+
+            try:
+                for index in missing:
+                    pending.append((
+                        index,
+                        self._executor.submit(self._process_frame, self._decode(video, index), video, index),
+                    ))
+                    if len(pending) == 4:
+                        resolve()
+                while pending:
+                    resolve()
+            except BaseException:
+                for _index, future in pending:
+                    future.cancel()
+                raise
         # TCHW API with CTHW storage makes the model's NCTHW view contiguous.
         window = torch.empty(
             (3, len(indices), *FRAME_SIZE), dtype=torch.uint8, pin_memory=self.pin_memory

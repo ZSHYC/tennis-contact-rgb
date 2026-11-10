@@ -1,5 +1,6 @@
 import csv
 import json
+import threading
 from pathlib import Path
 
 import cv2
@@ -25,6 +26,30 @@ def _video(path: Path, count: int = 4) -> None:
     for value in range(count):
         writer.write(np.full((24, 32, 3), (value * 50, 0, 255 - value * 50), np.uint8))
     writer.release()
+
+
+class _FakeCapture:
+    def __init__(self, _path):
+        self.index = 0
+
+    def isOpened(self):
+        return True
+
+    def set(self, _prop, value):
+        self.index = int(value)
+        return True
+
+    def grab(self):
+        self.index += 1
+        return True
+
+    def read(self):
+        frame = np.full((4, 6, 3), self.index, dtype=np.uint8)
+        self.index += 1
+        return True, frame
+
+    def release(self):
+        pass
 
 
 def _reference_frames(path: Path, indices: np.ndarray) -> torch.Tensor:
@@ -141,6 +166,55 @@ def test_frame_reader_assembles_model_layout_without_an_extra_window_copy(tmp_pa
     assert torch.equal(rgb, _reference_frames(video, indices))
     assert rgb.permute(1, 0, 2, 3).is_contiguous()
     assert rgb.is_pinned() == pinned
+
+
+def test_frame_reader_overlaps_pixel_processing_and_closes_workers(tmp_path, monkeypatch):
+    video = tmp_path / "parallel.mp4"
+    video.touch()
+    monkeypatch.setattr(data, "FRAME_SIZE", (4, 6))
+    monkeypatch.setattr(cv2, "VideoCapture", _FakeCapture)
+    rendezvous = threading.Barrier(2, timeout=1)
+    worker_names = set()
+
+    def process(frame, _video, _index):
+        worker_names.add(threading.current_thread().name)
+        rendezvous.wait()
+        return torch.from_numpy(frame).permute(2, 0, 1)
+
+    monkeypatch.setattr(FrameReader, "_process_frame", staticmethod(process))
+    reader = FrameReader()
+    with reader:
+        rgb = reader.read(video, np.array([0, 1]))
+        assert rgb[:, 0, 0, 0].tolist() == [0, 1]
+        assert len(worker_names) == 2
+    assert reader._executor is None
+
+
+def test_frame_reader_propagates_worker_errors_and_can_be_reused(tmp_path, monkeypatch):
+    video = tmp_path / "error.mp4"
+    video.touch()
+    monkeypatch.setattr(data, "FRAME_SIZE", (4, 6))
+
+    monkeypatch.setattr(cv2, "VideoCapture", _FakeCapture)
+
+    def fail_on_one(frame, _video, _index):
+        if int(frame[0, 0, 0]) == 1:
+            raise RuntimeError("pixel worker failed")
+        return torch.from_numpy(frame).permute(2, 0, 1)
+
+    monkeypatch.setattr(FrameReader, "_process_frame", staticmethod(fail_on_one))
+    reader = FrameReader()
+    with pytest.raises(RuntimeError, match="pixel worker failed"):
+        with reader:
+            reader.read(video, np.array([0, 1]))
+    assert reader._executor is None
+
+    monkeypatch.setattr(
+        FrameReader, "_process_frame",
+        staticmethod(lambda frame, _video, _index: torch.from_numpy(frame).permute(2, 0, 1)),
+    )
+    with reader:
+        assert reader.read(video, np.array([2])).shape == (1, 3, 4, 6)
 
 
 def test_frame_reader_seeks_late_random_requests_instead_of_scanning_from_zero(tmp_path, monkeypatch):
