@@ -86,7 +86,7 @@ def main(argv=None):
         from .data import load_dataset, probe_video
         from .inference import predict_video
         from .model import load_model
-        model, metadata = load_model(arguments.checkpoint, arguments.device)
+        model, metadata = load_model(arguments.checkpoint)
         thresholds = metadata["thresholds" if arguments.profile == "primary" else "secondary_thresholds"]
         if arguments.thresholds:
             thresholds = json.loads(arguments.thresholds.read_text(encoding="utf-8"))["thresholds"]

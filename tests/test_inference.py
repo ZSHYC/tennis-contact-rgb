@@ -50,7 +50,17 @@ def test_predict_prefetch_matches_sequential_windows_on_real_video(
     times = data.probe_video(video)
 
     class PixelModel(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.fused = False
+            self.precisions = []
+
+        def fuse_for_inference(self):
+            self.fused = True
+            return self
+
         def forward(self, rgb, *, precision):
+            self.precisions.append(precision)
             values = rgb.float().mean(dim=(1, 2, 3)) / 255
             # Include window context so changing halo or order changes the result.
             values = values + values.mean()
@@ -88,5 +98,7 @@ def test_predict_prefetch_matches_sequential_windows_on_real_video(
     for event in events:
         event["time_seconds"] = float(times[event["frame_number"]] - times[0])
     assert result["events"] == events
+    assert model.fused
+    assert model.precisions == ["fp32"] * (expected_windows * 2)
     assert result["cost"]["windows"] == expected_windows
     assert len(reads) == expected_windows

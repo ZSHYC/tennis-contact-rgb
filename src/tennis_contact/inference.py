@@ -39,13 +39,15 @@ def restore_logits(windows, outputs, frame_times):
 
 
 def predict_video(model, video, frame_times, *, device="cpu", thresholds=None):
+    """推理完整视频；传入模型会原地转换为冻结的推理结构。"""
     from .data import FrameReader, WindowSampler
     from .evaluation import decode_events
     from .pipeline import prefetch
 
     started = perf_counter()
     target = torch.device(device)
-    model.to(target).eval()
+    model.eval().fuse_for_inference().to(target)
+    precision = "fp16" if target.type == "cuda" else "fp32"
     thresholds = thresholds or {"hit": .60, "bounce": .48}
     sampler = WindowSampler(frame_times)
     accumulator = _LogitAccumulator(frame_times)
@@ -71,7 +73,7 @@ def predict_video(model, video, frame_times, *, device="cpu", thresholds=None):
                     continue
                 tick = perf_counter()
                 rgb = rgb.to(target, non_blocking=True)
-                output = model(rgb, precision="fp32")
+                output = model(rgb, precision=precision)
                 values = _packed_logits(output)
                 if not bool(values.isfinite().all()):
                     raise FloatingPointError("模型输出包含非有限值")
