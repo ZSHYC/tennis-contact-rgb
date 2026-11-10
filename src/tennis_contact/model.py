@@ -7,24 +7,11 @@ from pathlib import Path
 from typing import Any
 
 import torch
-from fvcore.nn.squeeze_excitation import SqueezeExcitation
-from pytorchvideo.layers.swish import Swish
-from pytorchvideo.models.hub.x3d import x3d_s
 from torch import nn
 from torch.nn import functional as F
 
-
-class _FrameSE(nn.Module):
-    """为每个时刻独立计算通道门控的X3D激励层。"""
-
-    is_3d = True
-
-    def __init__(self, original: SqueezeExcitation) -> None:
-        super().__init__()
-        self.block = original.block
-
-    def forward(self, values: torch.Tensor) -> torch.Tensor:
-        return values * self.block(values.mean(dim=(3, 4), keepdim=True))
+from ._x3d import _FrameSE as _FrameSE
+from ._x3d import x3d_s
 
 
 class _SpatialMean(nn.Module):
@@ -32,30 +19,12 @@ class _SpatialMean(nn.Module):
         return values.mean(dim=(3, 4), keepdim=True)
 
 
-def _enable_frame_se(model: nn.Module) -> None:
-    targets = [(name, module) for name, module in model.named_modules() if isinstance(module, SqueezeExcitation)]
-    if len(targets) != 15:
-        raise RuntimeError("X3D-S must contain 15 squeeze-excitation layers")
-    for name, module in targets:
-        parent_name, _, attribute = name.rpartition(".")
-        setattr(model.get_submodule(parent_name), attribute, _FrameSE(module))
-
-
-def _enable_standard_silu(model: nn.Module) -> None:
-    targets = [(name, module) for name, module in model.named_modules() if isinstance(module, Swish)]
-    if len(targets) != 26:
-        raise RuntimeError("X3D-S must contain 26 Swish layers")
-    for name, _module in targets:
-        parent_name, _, attribute = name.rpartition(".")
-        setattr(model.get_submodule(parent_name), attribute, nn.SiLU())
-
-
 class TennisContactNet(nn.Module):
     """逐帧FrameSE、S3局部状态与完整窗口双向GRU。"""
 
     def __init__(self) -> None:
         super().__init__()
-        blocks = x3d_s(pretrained=False).blocks
+        blocks = x3d_s().blocks
         head = blocks[5]
         self.trunk = nn.Sequential(*list(blocks[:5]))
         self.pool = head.pool
@@ -71,8 +40,6 @@ class TennisContactNet(nn.Module):
         self.state_adapter = nn.Sequential(nn.Linear(68, 128), nn.SiLU(), nn.Linear(128, 2048))
         nn.init.zeros_(self.state_adapter[-1].weight)
         nn.init.zeros_(self.state_adapter[-1].bias)
-        _enable_frame_se(self)
-        _enable_standard_silu(self)
         self._freeze_batch_norm()
 
     def _freeze_batch_norm(self) -> None:

@@ -21,6 +21,34 @@ def test_checkpoint_loads_strictly_and_has_expected_layout():
     assert metadata["secondary_thresholds"] == {"hit": 0.67, "bounce": 0.57}
 
 
+def test_constructor_preserves_frozen_x3d_seed_contract():
+    torch.manual_seed(2026)
+    model = TennisContactNet()
+    expected = {
+        "trunk.0.conv.conv_t.weight": [-0.023615488782525063, 0.09282617270946503,
+                                        0.12029710412025452, -0.0778420940041542],
+        "trunk.3.res_blocks.10.branch2.norm_b.1.block.2.weight":
+            [-0.004059214144945145, 0.0022257249802351,
+             -0.00022152686142362654, -0.1371549665927887],
+        "pool.post_conv.weight": [-0.022027993574738503, 0.014491512440145016,
+                                  -0.0024628571700304747, 0.02690165489912033],
+        "gru.weight_ih_l0": [0.019463106989860535, -0.03992495685815811,
+                             -0.04006730020046234, 0.04196435958147049],
+        "state_adapter.0.weight": [-0.08995778858661652, 0.09162204712629318,
+                                   0.03869125619530678, 0.04250316694378853],
+    }
+    state = model.state_dict()
+    for name, values in expected.items():
+        torch.testing.assert_close(state[name].flatten()[:4], torch.tensor(values), rtol=0, atol=0)
+    torch.testing.assert_close(
+        torch.rand(4),
+        torch.tensor([0.7665562629699707, 0.6637804508209229,
+                      0.7691547274589539, 0.9119697213172913]),
+        rtol=0,
+        atol=0,
+    )
+
+
 def test_inference_fusion_is_complete_close_and_idempotent():
     torch.manual_seed(11)
     model = TennisContactNet().eval()
