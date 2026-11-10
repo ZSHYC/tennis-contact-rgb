@@ -1,6 +1,12 @@
+import json
+
 import pytest
 
-from scripts.benchmark_inference import compare_predictions
+from scripts.benchmark_inference import (
+    compare_predictions,
+    prediction_acceptance,
+    read_quality_report,
+)
 
 
 def _prediction():
@@ -29,3 +35,42 @@ def test_prediction_comparison_detects_score_and_event_changes():
         "field": "events", "expected_count": 1, "actual_count": 0,
         "first_difference": {"index": 0, "expected": expected["events"][0], "actual": None},
     }
+
+
+def test_score_changes_need_a_passing_full_quality_report(tmp_path):
+    changed = _prediction()
+    changed["scores"][0][0] += 0.01
+    differences = compare_predictions(_prediction(), changed)
+    assert not prediction_acceptance(differences, None)
+
+    quality = tmp_path / "quality.json"
+    quality.write_text(json.dumps({"status": "fail", "coverage": {
+        "validation": 505, "holdout": 45, "official": 1622, "admin": 6,
+    }}))
+    assert not prediction_acceptance(differences, read_quality_report(quality)["pass"])
+
+    quality.write_text(json.dumps({"status": "pass", "coverage": {
+        "validation": 505, "holdout": 45, "official": 1622,
+    }}))
+    assert not prediction_acceptance(differences, read_quality_report(quality)["pass"])
+
+    quality.write_text(json.dumps({"status": "pass", "coverage": {
+        "validation": 505, "holdout": 45, "official": 1622, "admin": 6,
+    }}))
+    assert prediction_acceptance(differences, read_quality_report(quality)["pass"])
+
+
+def test_quality_report_never_allows_pts_or_threshold_changes(tmp_path):
+    quality = tmp_path / "quality.json"
+    quality.write_text(json.dumps({"status": "pass", "coverage": {
+        "validation": 505, "holdout": 45, "official": 1622, "admin": 6,
+    }}))
+    quality_pass = read_quality_report(quality)["pass"]
+
+    changed_pts = _prediction()
+    changed_pts["frame_times"][1] += 0.001
+    assert not prediction_acceptance(compare_predictions(_prediction(), changed_pts), quality_pass)
+
+    changed_threshold = _prediction()
+    changed_threshold["thresholds"]["hit"] = 0.61
+    assert not prediction_acceptance(compare_predictions(_prediction(), changed_threshold), quality_pass)

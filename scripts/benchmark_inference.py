@@ -17,6 +17,7 @@ from time import perf_counter
 
 
 ROOT = Path(__file__).resolve().parents[1]
+QUALITY_COVERAGE = {"validation": 505, "holdout": 45, "official": 1622, "admin": 6}
 
 
 def _shape(value):
@@ -73,6 +74,25 @@ def compare_predictions(expected, actual):
             "actual": actual.get("thresholds"),
         })
     return mismatches
+
+
+def read_quality_report(path):
+    path = Path(path).resolve()
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("quality report must be an object")
+    return {
+        "path": str(path),
+        "status": payload.get("status"),
+        "coverage": payload.get("coverage"),
+        "pass": payload.get("status") == "pass" and payload.get("coverage") == QUALITY_COVERAGE,
+    }
+
+
+def prediction_acceptance(differences, quality_pass):
+    if any(row.get("field") in {"frame_times", "thresholds"} for row in differences):
+        return False
+    return not differences if quality_pass is None else quality_pass
 
 
 def _manifest(path):
@@ -181,6 +201,7 @@ def main(argv=None):
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--repeats", type=int, default=3)
     parser.add_argument("--device", default="cuda")
+    parser.add_argument("--quality-report", type=Path)
     arguments = parser.parse_args(argv)
     if arguments.repeats < 2 or not (arguments.baseline / "src" / "tennis_contact").is_dir():
         parser.error("repeats must be at least 2 and baseline must contain src/tennis_contact")
@@ -235,13 +256,24 @@ def main(argv=None):
                 "baseline_median": baseline["median"],
                 "current_median": current["median"],
             })
-    semantic_pass = not mismatches
+    quality = read_quality_report(arguments.quality_report) if arguments.quality_report else None
+    quality_pass = quality["pass"] if quality else None
+    all_differences = [
+        difference for mismatch in mismatches for difference in mismatch["differences"]
+    ]
+    exact_predictions = not mismatches
+    semantic_pass = prediction_acceptance(all_differences, quality_pass)
     performance_pass = (
         current_suite["maximum"] < baseline_suite["minimum"] and not source_regressions
     )
     report = {
         "status": "pass" if semantic_pass and performance_pass else "fail",
         "semantic_pass": semantic_pass,
+        "exact_predictions": exact_predictions,
+        "quality_pass": quality_pass,
+        "quality_report": quality["path"] if quality else None,
+        "quality_report_status": quality["status"] if quality else None,
+        "quality_report_coverage": quality["coverage"] if quality else None,
         "performance_pass": performance_pass,
         "performance_contract": {
             "suite": "current maximum repeat wall must be below baseline minimum repeat wall",
@@ -258,7 +290,8 @@ def main(argv=None):
     arguments.output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({
         "status": report["status"], "speedup": report["speedup"],
-        "semantic_pass": semantic_pass, "performance_pass": performance_pass,
+        "semantic_pass": semantic_pass, "exact_predictions": exact_predictions,
+        "quality_pass": quality_pass, "performance_pass": performance_pass,
         "output": str(arguments.output),
     }, ensure_ascii=False))
     return 0 if report["status"] == "pass" else 1
