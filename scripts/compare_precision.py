@@ -16,6 +16,7 @@ from tennis_contact.data import FrameReader, VideoSample, WindowSampler
 from tennis_contact.evaluation import evaluate_predictions
 from tennis_contact.inference import _LogitAccumulator, _packed_logits
 from tennis_contact.model import load_model
+from tennis_contact.pipeline import prefetch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -106,21 +107,30 @@ def _predict_modes(models, video: Path, frame_times: np.ndarray, modes, target):
     old_cudnn = torch.backends.cudnn.allow_tf32
     try:
         with FrameReader(max_cached_frames=56, pin_memory=target.type == "cuda") as reader, torch.inference_mode():
-            for start in range(0, sampler.count, 100):
+            def load(start):
+                tick = perf_counter()
                 window = sampler.window(start)
                 if not window["core_mask"].any():
-                    continue
-                tick = perf_counter()
-                rgb = reader.read(video, window["indices"]).to(target, non_blocking=True)
-                if target.type == "cuda":
-                    torch.cuda.synchronize(target)
-                input_seconds += perf_counter() - tick
-                packed, elapsed = _forward_modes(models, rgb, modes, target)
-                for mode in modes:
-                    accumulators[mode].add(window, packed[mode])
-                    timings[mode] += elapsed[mode]
-                windows += 1
-                del rgb, packed
+                    return window, None, perf_counter() - tick
+                rgb = reader.read(video, window["indices"])
+                return window, rgb, perf_counter() - tick
+
+            with prefetch(range(0, sampler.count, 100), load) as prepared:
+                for window, rgb, read_elapsed in prepared:
+                    input_seconds += read_elapsed
+                    if not window["core_mask"].any():
+                        continue
+                    tick = perf_counter()
+                    rgb = rgb.to(target, non_blocking=True)
+                    if target.type == "cuda":
+                        torch.cuda.synchronize(target)
+                    input_seconds += perf_counter() - tick
+                    packed, elapsed = _forward_modes(models, rgb, modes, target)
+                    for mode in modes:
+                        accumulators[mode].add(window, packed[mode])
+                        timings[mode] += elapsed[mode]
+                    windows += 1
+                    del rgb, packed
     finally:
         torch.backends.cuda.matmul.allow_tf32 = old_matmul
         torch.backends.cudnn.allow_tf32 = old_cudnn

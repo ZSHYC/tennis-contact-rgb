@@ -1,7 +1,11 @@
+import threading
+from pathlib import Path
+
 import numpy as np
 import pytest
 import torch
 
+import scripts.compare_precision as precision_evaluator
 from scripts.compare_precision import (
     _forward_modes,
     _load_reference_scores,
@@ -72,6 +76,62 @@ def test_cached_reference_scores_are_reused_and_require_exact_frame_times(tmp_pa
     )
     with pytest.raises(ValueError, match="frame_times"):
         _load_reference_scores(root, row, frame_times + 1e-12)
+
+
+def test_predict_modes_prefetches_each_decode_once(monkeypatch):
+    main_thread = threading.get_ident()
+    reads = []
+
+    class FakeSampler:
+        count = 101
+
+        def __init__(self, _frame_times):
+            pass
+
+        def window(self, start):
+            return {
+                "indices": np.array([start // 100]),
+                "core_mask": np.array([True]),
+            }
+
+    class FakeReader:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
+
+        def read(self, _video, indices):
+            reads.append((threading.get_ident(), indices.item()))
+            return torch.zeros(1, 3, 4, 4, dtype=torch.uint8)
+
+    class FakeAccumulator:
+        def __init__(self, frame_times):
+            self.length = len(frame_times)
+
+        def add(self, _window, _values):
+            pass
+
+        def finish(self):
+            return np.zeros((self.length, 3), dtype=np.float32)
+
+    def fake_forward(_models, _rgb, modes, _target):
+        return ({mode: torch.zeros(1, 3) for mode in modes}, {mode: 0.0 for mode in modes})
+
+    monkeypatch.setattr(precision_evaluator, "WindowSampler", FakeSampler)
+    monkeypatch.setattr(precision_evaluator, "FrameReader", FakeReader)
+    monkeypatch.setattr(precision_evaluator, "_LogitAccumulator", FakeAccumulator)
+    monkeypatch.setattr(precision_evaluator, "_forward_modes", fake_forward)
+
+    _scores, cost = precision_evaluator._predict_modes(
+        {}, Path("unused.mp4"), np.array([0.0, 0.04]), ("fp32",), torch.device("cpu")
+    )
+    assert [index for _thread, index in reads] == [0, 1]
+    assert {thread for thread, _index in reads}.isdisjoint({main_thread})
+    assert cost["windows"] == 2
 
 
 def test_quality_comparison_exposes_count_and_f1_regressions():
