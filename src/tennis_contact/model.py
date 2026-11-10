@@ -85,6 +85,32 @@ class TennisContactNet(nn.Module):
         self._freeze_batch_norm()
         return self
 
+    def fuse_for_inference(self) -> TennisContactNet:
+        """Fold all X3D BatchNorm3d layers into their preceding convolutions."""
+        if self.trunk[0].norm is None:
+            return self
+        if self.training:
+            raise ValueError("inference fusion requires eval mode")
+        fuse = torch.nn.utils.fuse_conv_bn_eval
+        self.trunk[0].conv.conv_xy = fuse(self.trunk[0].conv.conv_xy, self.trunk[0].norm)
+        self.trunk[0].norm = None
+        for stage in self.trunk[1:]:
+            for block in stage.res_blocks:
+                if block.branch1_norm is not None:
+                    block.branch1_conv = fuse(block.branch1_conv, block.branch1_norm)
+                    block.branch1_norm = None
+                branch = block.branch2
+                for suffix in ("a", "c"):
+                    convolution = f"conv_{suffix}"
+                    normalization = f"norm_{suffix}"
+                    setattr(branch, convolution, fuse(getattr(branch, convolution), getattr(branch, normalization)))
+                    setattr(branch, normalization, None)
+                branch.conv_b = fuse(branch.conv_b, branch.norm_b[0])
+                branch.norm_b[0] = nn.Identity()
+        self.pool.pre_conv = fuse(self.pool.pre_conv, self.pool.pre_norm)
+        self.pool.pre_norm = None
+        return self.requires_grad_(False)
+
     @staticmethod
     def _grid(height: int, width: int, reference: torch.Tensor) -> torch.Tensor:
         y = (torch.arange(height, device=reference.device, dtype=reference.dtype) + 0.5) * (2 / height) - 1

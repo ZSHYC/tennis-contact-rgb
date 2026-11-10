@@ -1,9 +1,10 @@
+import copy
 from pathlib import Path
 
 import pytest
 import torch
 
-from tennis_contact.model import TennisContactNet, load_model
+from tennis_contact.model import TennisContactNet, _FrameSE, load_model
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,6 +19,29 @@ def test_checkpoint_loads_strictly_and_has_expected_layout():
     assert len(initialization.state_dict()) == 583
     assert metadata["thresholds"] == {"hit": 0.60, "bounce": 0.48}
     assert metadata["secondary_thresholds"] == {"hit": 0.67, "bounce": 0.57}
+
+
+def test_inference_fusion_is_complete_close_and_idempotent():
+    torch.manual_seed(11)
+    model = TennisContactNet().eval()
+    assert sum(isinstance(module, torch.nn.BatchNorm3d) for module in model.modules()) == 83
+    fused = copy.deepcopy(model)
+    rgb = torch.randint(0, 256, (2, 3, 32, 32), dtype=torch.uint8)
+    with torch.inference_mode():
+        expected = model(rgb)
+        returned = fused.fuse_for_inference()
+        actual = fused(rgb)
+    assert returned is fused
+    assert not any(isinstance(module, torch.nn.BatchNorm3d) for module in fused.modules())
+    assert sum(isinstance(module, _FrameSE) for module in fused.modules()) == 15
+    for key in expected:
+        torch.testing.assert_close(actual[key], expected[key], rtol=1e-5, atol=1e-6)
+    state = {key: value.clone() for key, value in fused.state_dict().items()}
+    assert fused.fuse_for_inference() is fused
+    assert all(torch.equal(state[key], value) for key, value in fused.state_dict().items())
+
+    with pytest.raises(ValueError, match="eval"):
+        TennisContactNet().fuse_for_inference()
 
 
 def test_forward_and_trunk2_backward():

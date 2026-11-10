@@ -32,20 +32,22 @@ def _report(tp=9, fp=1, fn=1, f1=.9, mean_error=1.0, fp_per_minute=.1):
 
 
 def test_precision_modes_use_declared_order_precision_and_tf32():
-    model = _ModeModel()
-    modes = ("fp32", "tf32", "bf16", "bf16_tf32", "fp16")
+    base, fused = _ModeModel(), _ModeModel()
+    modes = ("fp32", "tf32", "bf16", "bf16_tf32", "fp16", "fused_fp32", "fused_fp16")
     old = (torch.backends.cuda.matmul.allow_tf32, torch.backends.cudnn.allow_tf32)
     try:
         values, seconds = _forward_modes(
-            model, torch.zeros(2, 3, 4, 4, dtype=torch.uint8), modes, torch.device("cpu")
+            {"base": base, "fused": fused},
+            torch.zeros(2, 3, 4, 4, dtype=torch.uint8), modes, torch.device("cpu")
         )
     finally:
         torch.backends.cuda.matmul.allow_tf32, torch.backends.cudnn.allow_tf32 = old
-    assert model.calls == [
+    assert base.calls == [
         ("fp32", False, False), ("fp32", True, True),
         ("bf16", False, False), ("bf16", True, True),
         ("fp16", False, False),
     ]
+    assert fused.calls == [("fp32", False, False), ("fp16", False, False)]
     assert list(values) == list(seconds) == list(modes)
 
 

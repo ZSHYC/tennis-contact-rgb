@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 from pathlib import Path
 from time import perf_counter
@@ -19,12 +20,15 @@ from tennis_contact.model import load_model
 
 ROOT = Path(__file__).resolve().parents[1]
 MODE_SETTINGS = {
-    "fp32": ("fp32", False),
-    "tf32": ("fp32", True),
-    "bf16": ("bf16", False),
-    "bf16_tf32": ("bf16", True),
-    "fp16": ("fp16", False),
+    "fp32": ("base", "fp32", False),
+    "tf32": ("base", "fp32", True),
+    "bf16": ("base", "bf16", False),
+    "bf16_tf32": ("base", "bf16", True),
+    "fp16": ("base", "fp16", False),
+    "fused_fp32": ("fused", "fp32", False),
+    "fused_fp16": ("fused", "fp16", False),
 }
+DEFAULT_MODES = ("fp32", "fused_fp32", "fused_fp16")
 THRESHOLDS = {
     "primary": {"hit": 0.60, "bounce": 0.48},
     "secondary": {"hit": 0.67, "bounce": 0.57},
@@ -71,17 +75,17 @@ def _rows(path: Path, axes: set[str]) -> list[dict]:
     return rows
 
 
-def _forward_modes(model, rgb, modes, target):
+def _forward_modes(models, rgb, modes, target):
     """Run one already-transferred window in deterministic mode order."""
     values, seconds = {}, {}
     for mode in modes:
-        precision, tf32 = MODE_SETTINGS[mode]
+        model_name, precision, tf32 = MODE_SETTINGS[mode]
         torch.backends.cuda.matmul.allow_tf32 = tf32
         torch.backends.cudnn.allow_tf32 = tf32
         if target.type == "cuda":
             torch.cuda.synchronize(target)
         started = perf_counter()
-        output = model(rgb, precision=precision)
+        output = models[model_name](rgb, precision=precision)
         packed = _packed_logits(output)
         if target.type == "cuda":
             torch.cuda.synchronize(target)
@@ -92,7 +96,7 @@ def _forward_modes(model, rgb, modes, target):
     return values, seconds
 
 
-def _predict_modes(model, video: Path, frame_times: np.ndarray, modes, target):
+def _predict_modes(models, video: Path, frame_times: np.ndarray, modes, target):
     sampler = WindowSampler(frame_times)
     accumulators = {mode: _LogitAccumulator(frame_times) for mode in modes}
     timings = {mode: 0.0 for mode in modes}
@@ -111,7 +115,7 @@ def _predict_modes(model, video: Path, frame_times: np.ndarray, modes, target):
                 if target.type == "cuda":
                     torch.cuda.synchronize(target)
                 input_seconds += perf_counter() - tick
-                packed, elapsed = _forward_modes(model, rgb, modes, target)
+                packed, elapsed = _forward_modes(models, rgb, modes, target)
                 for mode in modes:
                     accumulators[mode].add(window, packed[mode])
                     timings[mode] += elapsed[mode]
@@ -226,7 +230,7 @@ def main(argv=None) -> int:
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--axes", nargs="+", choices=tuple(EXPECTED_COVERAGE), default=["validation"])
-    parser.add_argument("--modes", nargs="+", choices=tuple(MODE_SETTINGS), default=list(MODE_SETTINGS))
+    parser.add_argument("--modes", nargs="+", choices=tuple(MODE_SETTINGS), default=list(DEFAULT_MODES))
     parser.add_argument("--checkpoint", type=Path, default=ROOT / "weights/best.pt")
     parser.add_argument("--device", default="cuda")
     arguments = parser.parse_args(argv)
@@ -253,14 +257,20 @@ def main(argv=None) -> int:
 
     torch.set_num_threads(4)
     target = torch.device(arguments.device)
-    model, _model_metadata = load_model(arguments.checkpoint, target)
+    model, _model_metadata = load_model(arguments.checkpoint, "cpu")
+    fused = copy.deepcopy(model).fuse_for_inference() if any(
+        MODE_SETTINGS[mode][0] == "fused" for mode in modes
+    ) else None
+    models = {"base": model.to(target)}
+    if fused is not None:
+        models["fused"] = fused.to(target)
     for index, row in enumerate(rows, 1):
         destination = arguments.output / "scores" / row["axis"] / f"{row['id']}.npz"
         produced = not destination.is_file()
         if produced:
             destination.parent.mkdir(parents=True, exist_ok=True)
             sample, video = _sample(row)
-            scores, cost = _predict_modes(model, video, sample.frame_times, modes, target)
+            scores, cost = _predict_modes(models, video, sample.frame_times, modes, target)
             temporary = destination.with_suffix(".tmp.npz")
             np.savez_compressed(temporary, frame_times=sample.frame_times, **scores)
             temporary.replace(destination)
