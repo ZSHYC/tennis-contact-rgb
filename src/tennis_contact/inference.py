@@ -55,15 +55,13 @@ def predict_video(model, video, frame_times, *, device="cpu", thresholds=None):
         torch.backends.cudnn.allow_tf32 = False
         torch.cuda.reset_peak_memory_stats(target)
 
-    with FrameReader() as reader, torch.inference_mode():
+    with FrameReader(max_cached_frames=56, pin_memory=target.type == "cuda") as reader, torch.inference_mode():
         def load(start):
             tick = perf_counter()
             window = sampler.window(start)
             if not window["core_mask"].any():
                 return window, None, perf_counter() - tick
             rgb = reader.read(video, window["indices"])
-            if target.type == "cuda":
-                rgb = rgb.pin_memory()
             return window, rgb, perf_counter() - tick
 
         with prefetch(range(0, sampler.count, 100), load) as prepared:

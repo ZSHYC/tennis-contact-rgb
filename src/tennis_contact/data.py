@@ -228,10 +228,11 @@ class FrameReader:
     # 超过完整模型窗口的间隔直接 seek，避免随机请求线性扫描。
     _MAX_SEQUENTIAL_GAP = 156
 
-    def __init__(self, max_cached_frames: int = 256) -> None:
+    def __init__(self, max_cached_frames: int = 256, *, pin_memory: bool = False) -> None:
         if isinstance(max_cached_frames, bool) or not isinstance(max_cached_frames, int) or max_cached_frames < 1:
             raise ValueError("max_cached_frames must be a positive integer")
         self.max_cached_frames = max_cached_frames
+        self.pin_memory = pin_memory
         self._frames: OrderedDict[tuple[Path, int], torch.Tensor] = OrderedDict()
         self._capture = None
         self._video: Path | None = None
@@ -313,7 +314,11 @@ class FrameReader:
             self._frames[(video, index)] = decoded[index] = frame
             if len(self._frames) > self.max_cached_frames:
                 self._frames.popitem(last=False)
-        return torch.stack([decoded[int(index)] for index in indices])
+        # TCHW API with CTHW storage makes the model's NCTHW view contiguous.
+        window = torch.empty(
+            (3, len(indices), *FRAME_SIZE), dtype=torch.uint8, pin_memory=self.pin_memory
+        ).permute(1, 0, 2, 3)
+        return torch.stack([decoded[int(index)] for index in indices], out=window)
 
 
 def read_frames(video: Path, frame_indices: np.ndarray) -> torch.Tensor:

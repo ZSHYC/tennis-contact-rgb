@@ -129,6 +129,20 @@ def test_frame_reader_reuses_processed_frames_without_changing_pixels(tmp_path):
     assert torch.equal(backward, _reference_frames(video, np.array([1, 7, 1])))
 
 
+@pytest.mark.parametrize("pinned", [False, True])
+def test_frame_reader_assembles_model_layout_without_an_extra_window_copy(tmp_path, pinned):
+    if pinned and not torch.cuda.is_available():
+        pytest.skip("pinned host allocation requires CUDA")
+    video = tmp_path / "layout.mp4"
+    _video(video, count=5)
+    indices = np.array([3, 0, 3, 2])
+    with FrameReader(pin_memory=pinned) as reader:
+        rgb = reader.read(video, indices)
+    assert torch.equal(rgb, _reference_frames(video, indices))
+    assert rgb.permute(1, 0, 2, 3).is_contiguous()
+    assert rgb.is_pinned() == pinned
+
+
 def test_frame_reader_seeks_late_random_requests_instead_of_scanning_from_zero(tmp_path, monkeypatch):
     videos = [tmp_path / "first.mp4", tmp_path / "second.mp4"]
     for video in videos:
